@@ -1,0 +1,11 @@
+[package]
+name = "cyberia-transport"
+version = "0.1.0"
+description = "Transport lifecycle contracts for Cyberia VPN"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

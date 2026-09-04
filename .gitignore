@@ -1,0 +1,18 @@
+# Rust
+/target/
+
+# Go
+*.test
+coverage.out
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
