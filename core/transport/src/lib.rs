@@ -9,6 +9,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+mod wireguard;
+
+pub use wireguard::{TunnelAddress, WireGuardConfig};
+
 /// A protocol implemented by a transport adapter.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TransportKind {
