@@ -6,6 +6,10 @@ use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+mod selector;
+
+pub use selector::{RouteSelector, SelectionPolicy};
+
 const QUALITY_MAX: u32 = 10_000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
