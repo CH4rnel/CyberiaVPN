@@ -22,6 +22,9 @@ foundation, not a production-ready VPN service.
 The planned top-level layout is described in
 [docs/architecture/overview.md](docs/architecture/overview.md). The delivery
 sequence and acceptance criteria live in [docs/ROADMAP.md](docs/ROADMAP.md).
+Development follows the TDD, XP and SOLID guidance in
+[CONTRIBUTING.md](CONTRIBUTING.md), backed by the project
+[test strategy](docs/testing/strategy.md).
 
 ## Status
 
