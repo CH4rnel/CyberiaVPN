@@ -5,15 +5,15 @@ complete when its tests, security checks and operational documentation pass.
 
 ## M0 — Architecture baseline
 
-- [ ] Record the control-plane/data-plane boundary.
-- [ ] Record the initial implementation languages and primary transport.
-- [ ] Establish the threat model and security reporting policy.
-- [ ] Create the Rust network-core workspace.
-- [ ] Define the transport lifecycle contract.
-- [ ] Implement deterministic node scoring and stable route selection.
-- [ ] Create a minimal, versioned Control API.
-- [ ] Create the first node-registry contract.
-- [ ] Run formatting, linting and tests in CI.
+- [x] Record the control-plane/data-plane boundary.
+- [x] Record the initial implementation languages and primary transport.
+- [x] Establish the threat model and security reporting policy.
+- [x] Create the Rust network-core workspace.
+- [x] Define the transport lifecycle contract.
+- [x] Implement deterministic node scoring and stable route selection.
+- [x] Create a minimal, versioned Control API.
+- [x] Create the first node-registry contract.
+- [x] Run formatting, linting and tests in CI.
 
 Exit criteria: architectural decisions are reviewable, public interfaces are
 covered by tests, and every supported toolchain is checked on each change.
