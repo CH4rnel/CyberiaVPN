@@ -8,6 +8,9 @@ use std::fmt::{Display, Formatter};
 
 mod selector;
 
+mod backoff;
+
+pub use backoff::{BackoffError, BackoffPolicy};
 pub use selector::{RouteSelector, SelectionPolicy};
 
 const QUALITY_MAX: u32 = 10_000;
