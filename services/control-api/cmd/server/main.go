@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -30,17 +30,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			logger.Error("control API shutdown failed", "error", err)
-		}
-	}()
-
-	logger.Info("control API starting", "address", server.Addr, "version", version)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		logger.Error("control API listen failed", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("control API starting", "address", listener.Addr().String(), "version", version)
+	if err := serve(ctx, server, listener); err != nil {
 		logger.Error("control API stopped unexpectedly", "error", err)
 		os.Exit(1)
 	}
