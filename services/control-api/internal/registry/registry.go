@@ -48,8 +48,10 @@ func (node Node) Validate() error {
 	if !validSlug(node.Region) {
 		return errors.New("region must be a lowercase slug")
 	}
-	if !node.Endpoint.IsValid() || node.Endpoint.Port() == 0 {
-		return errors.New("endpoint must contain a valid IP address and port")
+	address := node.Endpoint.Addr().Unmap()
+	if !node.Endpoint.IsValid() || node.Endpoint.Port() == 0 ||
+		address.IsUnspecified() || address.IsMulticast() || node.Endpoint.Addr().Zone() != "" {
+		return errors.New("endpoint must contain an unscoped unicast IP address and nonzero port")
 	}
 	if len(node.Transports) == 0 {
 		return errors.New("at least one transport is required")

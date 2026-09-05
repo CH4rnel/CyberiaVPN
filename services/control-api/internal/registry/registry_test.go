@@ -82,3 +82,19 @@ func testNode(id string) registry.Node {
 		RegisteredAt: time.Unix(1_788_563_400, 0).UTC(),
 	}
 }
+
+func TestRejectsUnusableNodeEndpoints(t *testing.T) {
+	for _, address := range []string{"0.0.0.0:51820", "[::]:51820", "224.0.0.1:51820", "[ff02::1]:51820", "[::ffff:0.0.0.0]:51820", "[fe80::1%eth0]:51820"} {
+		t.Run(address, func(t *testing.T) {
+			node := testNode("node-1")
+			node.Endpoint = netip.MustParseAddrPort(address)
+			store := registry.NewMemoryRegistry()
+			if err := store.Register(node); err == nil {
+				t.Fatal("accepted unusable endpoint")
+			}
+			if len(store.List()) != 0 {
+				t.Fatal("invalid node was stored")
+			}
+		})
+	}
+}
