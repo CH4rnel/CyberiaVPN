@@ -66,3 +66,15 @@ func validConfig(now time.Time) configuration.DeviceConfig {
 		ExpiresAt: now.Add(time.Hour),
 	}
 }
+
+func TestRejectsUnusableEndpoints(t *testing.T) {
+	for _, address := range []string{"0.0.0.0:51820", "[::]:51820", "224.0.0.1:51820", "[ff02::1]:51820", "[::ffff:224.0.0.1]:51820", "[fe80::1%eth0]:51820"} {
+		t.Run(address, func(t *testing.T) {
+			config := validConfig(testNow())
+			config.Endpoint = netip.MustParseAddrPort(address)
+			if err := config.Validate(testNow()); !errors.Is(err, configuration.ErrInvalid) {
+				t.Fatalf("error = %v, want ErrInvalid", err)
+			}
+		})
+	}
+}

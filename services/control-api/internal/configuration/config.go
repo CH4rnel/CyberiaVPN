@@ -41,8 +41,10 @@ func (config DeviceConfig) Validate(now time.Time) error {
 	if config.Transport != TransportWireGuard {
 		return fmt.Errorf("%w: unsupported transport %q", ErrInvalid, config.Transport)
 	}
-	if !config.Endpoint.IsValid() || config.Endpoint.Port() == 0 {
-		return fmt.Errorf("%w: endpoint must contain a valid IP address and port", ErrInvalid)
+	address := config.Endpoint.Addr().Unmap()
+	if !config.Endpoint.IsValid() || config.Endpoint.Port() == 0 ||
+		address.IsUnspecified() || address.IsMulticast() || config.Endpoint.Addr().Zone() != "" {
+		return fmt.Errorf("%w: endpoint must contain an unscoped unicast IP address and nonzero port", ErrInvalid)
 	}
 	if len(config.DNS) == 0 {
 		return fmt.Errorf("%w: at least one DNS resolver is required", ErrInvalid)
