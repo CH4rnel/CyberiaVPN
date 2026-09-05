@@ -61,7 +61,7 @@ impl WireGuardConfig {
                     "invalid tunnel address prefix",
                 ));
             }
-            if !unique_addresses.insert(*tunnel_address) {
+            if !unique_addresses.insert(tunnel_address.address) {
                 return Err(TransportError::InvalidConfig(
                     "duplicate WireGuard tunnel address",
                 ));
