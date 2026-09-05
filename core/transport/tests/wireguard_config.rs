@@ -65,3 +65,27 @@ fn rejects_unsafe_tunnel_mtu() {
         ))
     );
 }
+
+#[test]
+fn rejects_same_tunnel_ip_with_different_prefixes() {
+    let mut config = valid_config();
+    let mut duplicate = config.tunnel_addresses[0];
+    duplicate.prefix_length = 24;
+    config.tunnel_addresses.push(duplicate);
+    assert_eq!(
+        config.validate(),
+        Err(TransportError::InvalidConfig(
+            "duplicate WireGuard tunnel address"
+        ))
+    );
+}
+
+#[test]
+fn accepts_distinct_dual_stack_tunnel_addresses() {
+    let mut config = valid_config();
+    config.tunnel_addresses.push(TunnelAddress {
+        address: "fd00::2".parse().unwrap(),
+        prefix_length: 128,
+    });
+    assert_eq!(config.validate(), Ok(()));
+}
