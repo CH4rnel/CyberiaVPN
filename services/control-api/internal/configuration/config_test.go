@@ -78,3 +78,26 @@ func TestRejectsUnusableEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestRejectsAmbiguousDNSResolvers(t *testing.T) {
+	for _, addresses := range [][]string{
+		{"192.0.2.53", "192.0.2.53"},
+		{"192.0.2.53", "::ffff:192.0.2.53"},
+		{"fe80::53%eth0"},
+		{"::ffff:0.0.0.0"},
+	} {
+		config := validConfig(testNow())
+		config.DNS = nil
+		for _, address := range addresses {
+			config.DNS = append(config.DNS, netip.MustParseAddr(address))
+		}
+		if err := config.Validate(testNow()); !errors.Is(err, configuration.ErrInvalid) {
+			t.Errorf("DNS %v: error = %v, want ErrInvalid", addresses, err)
+		}
+	}
+	config := validConfig(testNow())
+	config.DNS = []netip.Addr{netip.MustParseAddr("192.0.2.53"), netip.MustParseAddr("2001:db8::53")}
+	if err := config.Validate(testNow()); err != nil {
+		t.Fatalf("distinct dual-stack resolvers: %v", err)
+	}
+}

@@ -49,10 +49,16 @@ func (config DeviceConfig) Validate(now time.Time) error {
 	if len(config.DNS) == 0 {
 		return fmt.Errorf("%w: at least one DNS resolver is required", ErrInvalid)
 	}
+	resolvers := make(map[netip.Addr]struct{}, len(config.DNS))
 	for _, resolver := range config.DNS {
-		if !resolver.IsValid() || resolver.IsUnspecified() || resolver.IsMulticast() {
+		address := resolver.Unmap()
+		if !address.IsValid() || address.IsUnspecified() || address.IsMulticast() || resolver.Zone() != "" {
 			return fmt.Errorf("%w: invalid DNS resolver", ErrInvalid)
 		}
+		if _, exists := resolvers[address]; exists {
+			return fmt.Errorf("%w: duplicate DNS resolver", ErrInvalid)
+		}
+		resolvers[address] = struct{}{}
 	}
 	if config.IssuedAt.IsZero() || config.ExpiresAt.IsZero() ||
 		!config.ExpiresAt.After(config.IssuedAt) {
