@@ -24,6 +24,20 @@ Deliver device identity, authenticated configuration delivery, a managed
 WireGuard node, client connection lifecycle, kill switch and privacy-preserving
 operational telemetry.
 
+Current component progress (not M1 completion):
+
+- [x] Device proof-of-possession verification.
+- [x] Signed, short-lived public configuration and versioned in-memory storage.
+- [x] Node metadata validation and lifecycle transitions.
+- [x] Public WireGuard profile validation and kill-switch state model.
+- [x] Operational metric validation and bounded reconnect policy.
+- [ ] Account authentication and authorization at HTTP boundaries.
+- [ ] Atomic consumption of expiring enrollment challenges and device persistence.
+- [ ] Authenticated configuration delivery and client rollback protection.
+- [ ] Managed WireGuard node and real transport adapter.
+- [ ] OS firewall implementation of the kill-switch contract.
+- [ ] End-to-end connect, disconnect and fail-safe integration tests.
+
 Exit criterion: a client can establish and safely tear down an authenticated
 WireGuard tunnel in a test environment.
 
