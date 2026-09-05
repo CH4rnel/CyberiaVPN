@@ -77,3 +77,34 @@ func TestRejectsUnboundedAttributeValue(t *testing.T) {
 		t.Fatalf("error = %v, want ErrInvalidMetric", err)
 	}
 }
+
+func TestMetricSpecificValueRanges(t *testing.T) {
+	tests := []struct {
+		name  telemetry.MetricName
+		value float64
+		valid bool
+	}{
+		{telemetry.PacketLossRatio, 0, true},
+		{telemetry.PacketLossRatio, 0.5, true},
+		{telemetry.PacketLossRatio, 1, true},
+		{telemetry.PacketLossRatio, 1.01, false},
+		{telemetry.ConnectionSuccess, 0, true},
+		{telemetry.ConnectionSuccess, 1, true},
+		{telemetry.ConnectionSuccess, 0.5, false},
+		{telemetry.ConnectionSuccess, 2, false},
+		{telemetry.ReconnectCount, 0, true},
+		{telemetry.ReconnectCount, 12, true},
+		{telemetry.ReconnectCount, 1.5, false},
+		{telemetry.HandshakeLatencyMS, 1.5, true},
+		{telemetry.RoundTripTimeMS, 2.5, true},
+	}
+	for _, test := range tests {
+		err := (telemetry.Metric{Name: test.name, Value: test.value}).Validate()
+		if test.valid && err != nil {
+			t.Errorf("%s=%v: %v", test.name, test.value, err)
+		}
+		if !test.valid && !errors.Is(err, telemetry.ErrInvalidMetric) {
+			t.Errorf("%s=%v: error = %v, want ErrInvalidMetric", test.name, test.value, err)
+		}
+	}
+}

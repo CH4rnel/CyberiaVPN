@@ -56,10 +56,15 @@ func (node Node) Validate() error {
 	if len(node.Transports) == 0 {
 		return errors.New("at least one transport is required")
 	}
+	transports := make(map[Transport]struct{}, len(node.Transports))
 	for _, transport := range node.Transports {
 		if transport != TransportWireGuard {
 			return fmt.Errorf("unsupported transport %q", transport)
 		}
+		if _, exists := transports[transport]; exists {
+			return fmt.Errorf("duplicate transport %q", transport)
+		}
+		transports[transport] = struct{}{}
 	}
 	if node.Status != StatusProvisioning && node.Status != StatusHealthy &&
 		node.Status != StatusRestricted && node.Status != StatusQuarantined {

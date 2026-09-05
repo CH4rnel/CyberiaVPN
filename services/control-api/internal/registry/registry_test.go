@@ -98,3 +98,15 @@ func TestRejectsUnusableNodeEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestRejectsDuplicateTransports(t *testing.T) {
+	node := testNode("node-1")
+	node.Transports = []registry.Transport{registry.TransportWireGuard, registry.TransportWireGuard}
+	store := registry.NewMemoryRegistry()
+	if err := store.Register(node); err == nil {
+		t.Fatal("accepted duplicate transports")
+	}
+	if len(store.List()) != 0 {
+		t.Fatal("invalid node was stored")
+	}
+}

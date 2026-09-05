@@ -60,6 +60,20 @@ func (metric Metric) Validate() error {
 	if math.IsNaN(metric.Value) || math.IsInf(metric.Value, 0) || metric.Value < 0 {
 		return fmt.Errorf("%w: value must be finite and non-negative", ErrInvalidMetric)
 	}
+	switch metric.Name {
+	case PacketLossRatio:
+		if metric.Value > 1 {
+			return fmt.Errorf("%w: packet loss ratio must be between zero and one", ErrInvalidMetric)
+		}
+	case ConnectionSuccess:
+		if metric.Value != 0 && metric.Value != 1 {
+			return fmt.Errorf("%w: connection success must be zero or one", ErrInvalidMetric)
+		}
+	case ReconnectCount:
+		if math.Trunc(metric.Value) != metric.Value {
+			return fmt.Errorf("%w: reconnect count must be an integer", ErrInvalidMetric)
+		}
+	}
 	if len(metric.Attributes) > maximumAttributes {
 		return fmt.Errorf("%w: too many attributes", ErrInvalidMetric)
 	}

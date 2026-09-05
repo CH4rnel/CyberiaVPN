@@ -2,6 +2,7 @@ package configuration_test
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,4 +87,42 @@ func testEnvelope(deviceID string, version uint64) configuration.SignedConfig {
 
 func testNow() time.Time {
 	return time.Unix(1_788_563_400, 0).UTC()
+}
+
+func TestZeroValueConfigurationStore(t *testing.T) {
+	var store configuration.MemoryStore
+	if _, err := store.Latest("laptop-1"); !errors.Is(err, configuration.ErrConfigNotFound) {
+		t.Fatalf("empty lookup: %v", err)
+	}
+	if err := store.Publish(testEnvelope("laptop-1", 1)); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if err := store.Publish(testEnvelope("laptop-1", 1)); !errors.Is(err, configuration.ErrStaleVersion) {
+		t.Fatalf("duplicate version: %v", err)
+	}
+	latest, err := store.Latest("laptop-1")
+	if err != nil || latest.Config.Version != 1 {
+		t.Fatalf("latest = %+v, error = %v", latest, err)
+	}
+}
+
+func TestZeroValueStoreSerializesConcurrentVersions(t *testing.T) {
+	var store configuration.MemoryStore
+	const writers = 32
+	var group sync.WaitGroup
+	for version := uint64(1); version <= writers; version++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			err := store.Publish(testEnvelope("laptop-1", version))
+			if err != nil && !errors.Is(err, configuration.ErrStaleVersion) {
+				t.Errorf("publish version %d: %v", version, err)
+			}
+		}()
+	}
+	group.Wait()
+	latest, err := store.Latest("laptop-1")
+	if err != nil || latest.Config.Version != writers {
+		t.Fatalf("latest version = %d, error = %v", latest.Config.Version, err)
+	}
 }
