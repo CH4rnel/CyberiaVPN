@@ -19,6 +19,8 @@ type Store interface {
 	Latest(deviceID string) (SignedConfig, error)
 }
 
+// MemoryStore keeps envelopes in memory. Its zero value is ready for use.
+// A MemoryStore must not be copied after first use.
 type MemoryStore struct {
 	mu      sync.RWMutex
 	devices map[string]SignedConfig
@@ -44,6 +46,9 @@ func (store *MemoryStore) Publish(envelope SignedConfig) error {
 			current.Config.Version,
 			envelope.Config.Version,
 		)
+	}
+	if store.devices == nil {
+		store.devices = make(map[string]SignedConfig)
 	}
 	store.devices[envelope.Config.DeviceID] = cloneEnvelope(envelope)
 	return nil
