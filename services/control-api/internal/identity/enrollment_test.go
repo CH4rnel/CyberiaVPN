@@ -166,3 +166,33 @@ func TestEnrollRejectsExpiredAndUnissuedChallenges(t *testing.T) {
 		t.Fatalf("expired: %v", err)
 	}
 }
+
+func TestDeviceLookupIsAccountScopedAndOwnsKeys(t *testing.T) {
+	now := time.Now()
+	store, _ := NewEnrollmentStore(time.Minute, 10)
+	request := enrollmentRequest(t, store, "account", "device", now)
+	expected := bytes.Clone(request.PublicKey)
+	registered, err := store.Enroll(request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.PublicKey[0] ^= 255
+	registered.PublicKey[1] ^= 255
+	for _, ids := range [][2]string{{"other", "device"}, {"account", "missing"}} {
+		if _, err := store.Device(ids[0], ids[1]); !errors.Is(err, ErrDeviceNotFound) {
+			t.Fatalf("lookup: %v", err)
+		}
+	}
+	found, err := store.Device("account", "device")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(found.PublicKey, expected) {
+		t.Fatal("stored key aliases enrollment")
+	}
+	found.PublicKey[2] ^= 255
+	again, err := store.Device("account", "device")
+	if err != nil || !bytes.Equal(again.PublicKey, expected) {
+		t.Fatal("stored key aliases read")
+	}
+}

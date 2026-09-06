@@ -118,3 +118,17 @@ func cloneDevice(device DeviceIdentity) DeviceIdentity {
 	device.PublicKey = bytes.Clone(device.PublicKey)
 	return device
 }
+
+var ErrDeviceNotFound = errors.New("device not found")
+
+// Device returns an owned snapshot only for the owning account. Unknown and
+// foreign devices deliberately return the same error.
+func (store *EnrollmentStore) Device(accountID, deviceID string) (DeviceIdentity, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	device, exists := store.devices[deviceID]
+	if !exists || device.AccountID != accountID {
+		return DeviceIdentity{}, ErrDeviceNotFound
+	}
+	return cloneDevice(device), nil
+}
