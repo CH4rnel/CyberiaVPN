@@ -196,3 +196,35 @@ func TestDeviceLookupIsAccountScopedAndOwnsKeys(t *testing.T) {
 		t.Fatal("stored key aliases read")
 	}
 }
+
+func TestExpiredChallengesReleaseCapacity(t *testing.T) {
+	now := time.Now()
+	store, _ := NewEnrollmentStore(time.Minute, 1)
+	expired, _ := store.Issue("account", "old", now)
+	fresh, err := store.Issue("account", "new", expired.ExpiresAt)
+	if err != nil {
+		t.Fatalf("expired entry blocks issuance: %v", err)
+	}
+	if err := store.Consume("account", "old", expired.Value, now); !errors.Is(err, ErrInvalidChallenge) {
+		t.Fatalf("pruned nonce restored: %v", err)
+	}
+	if err := store.Consume("account", "new", fresh.Value, expired.ExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeviceCapacityDoesNotConsumeChallenge(t *testing.T) {
+	now := time.Now()
+	store, _ := NewEnrollmentStore(time.Minute, 1)
+	first := enrollmentRequest(t, store, "account", "first", now)
+	if _, err := store.Enroll(first, now); err != nil {
+		t.Fatal(err)
+	}
+	second := enrollmentRequest(t, store, "account", "second", now)
+	if _, err := store.Enroll(second, now); !errors.Is(err, ErrEnrollmentCapacity) {
+		t.Fatalf("device capacity: %v", err)
+	}
+	if err := store.Consume("account", "second", second.Challenge, now); err != nil {
+		t.Fatalf("capacity failure consumed nonce: %v", err)
+	}
+}

@@ -34,6 +34,9 @@ type EnrollmentStore struct {
 	challenges map[[32]byte]pendingChallenge
 }
 
+// NewEnrollmentStore limits pending challenges and registered devices independently
+// to capacity. Expired challenges are reclaimed during issuance. Devices persist
+// until process restart; durable storage and device lifecycle are separate work.
 func NewEnrollmentStore(ttl time.Duration, capacity int) (*EnrollmentStore, error) {
 	if ttl <= 0 || ttl > 10*time.Minute || capacity <= 0 {
 		return nil, fmt.Errorf("%w: TTL must be in (0, 10m] and capacity positive", ErrInvalidEnrollment)
@@ -47,6 +50,11 @@ func (store *EnrollmentStore) Issue(accountID, deviceID string, now time.Time) (
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	for digest, pending := range store.challenges {
+		if !pending.expiresAt.After(now) {
+			delete(store.challenges, digest)
+		}
+	}
 	if len(store.challenges) >= store.capacity {
 		return Challenge{}, ErrEnrollmentCapacity
 	}
@@ -103,6 +111,9 @@ func (store *EnrollmentStore) Enroll(request EnrollmentRequest, now time.Time) (
 	defer store.mu.Unlock()
 	if _, exists := store.devices[device.DeviceID]; exists {
 		return DeviceIdentity{}, ErrDeviceExists
+	}
+	if len(store.devices) >= store.capacity {
+		return DeviceIdentity{}, ErrEnrollmentCapacity
 	}
 	if err := store.consumeLocked(device.AccountID, device.DeviceID, request.Challenge, now); err != nil {
 		return DeviceIdentity{}, err
