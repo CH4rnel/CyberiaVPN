@@ -60,3 +60,30 @@ func (store *EnrollmentStore) Issue(accountID, deviceID string, now time.Time) (
 	store.challenges[digest] = pendingChallenge{accountID: accountID, deviceID: deviceID, expiresAt: expiresAt}
 	return Challenge{Value: value, ExpiresAt: expiresAt}, nil
 }
+
+var ErrInvalidChallenge = errors.New("invalid or expired enrollment challenge")
+
+// Consume atomically accepts a fresh challenge once. Registration should use
+// Enroll once device persistence is required in the same transaction.
+func (store *EnrollmentStore) Consume(accountID, deviceID string, value []byte, now time.Time) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.consumeLocked(accountID, deviceID, value, now)
+}
+
+func (store *EnrollmentStore) consumeLocked(accountID, deviceID string, value []byte, now time.Time) error {
+	if len(value) != 32 {
+		return ErrInvalidChallenge
+	}
+	digest := sha256.Sum256(value)
+	pending, exists := store.challenges[digest]
+	if !exists || pending.accountID != accountID || pending.deviceID != deviceID {
+		return ErrInvalidChallenge
+	}
+	if !pending.expiresAt.After(now) {
+		delete(store.challenges, digest)
+		return ErrInvalidChallenge
+	}
+	delete(store.challenges, digest)
+	return nil
+}

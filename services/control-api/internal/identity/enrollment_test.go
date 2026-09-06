@@ -45,3 +45,48 @@ func TestRejectInvalidChallengePolicyAndIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestConsumeBindsIdentityAndExpires(t *testing.T) {
+	now := time.Unix(1800000000, 0)
+	store, _ := NewEnrollmentStore(time.Minute, 10)
+	challenge, _ := store.Issue("account", "device", now)
+	for _, ids := range [][2]string{{"other", "device"}, {"account", "other"}} {
+		if err := store.Consume(ids[0], ids[1], challenge.Value, now); !errors.Is(err, ErrInvalidChallenge) {
+			t.Fatalf("cross-identity consume: %v", err)
+		}
+	}
+	if err := store.Consume("account", "device", challenge.Value, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Consume("account", "device", challenge.Value, now); !errors.Is(err, ErrInvalidChallenge) {
+		t.Fatalf("replay: %v", err)
+	}
+	challenge, _ = store.Issue("account", "device", now)
+	if err := store.Consume("account", "device", challenge.Value, challenge.ExpiresAt); !errors.Is(err, ErrInvalidChallenge) {
+		t.Fatalf("expiry: %v", err)
+	}
+	if err := store.Consume("account", "device", []byte("unknown"), now); !errors.Is(err, ErrInvalidChallenge) {
+		t.Fatalf("unknown: %v", err)
+	}
+}
+
+func TestConcurrentChallengeConsumption(t *testing.T) {
+	now := time.Now()
+	store, _ := NewEnrollmentStore(time.Minute, 1)
+	challenge, _ := store.Issue("account", "device", now)
+	results := make(chan error, 20)
+	for range 20 {
+		go func() { results <- store.Consume("account", "device", challenge.Value, now) }()
+	}
+	successes := 0
+	for range 20 {
+		if err := <-results; err == nil {
+			successes++
+		} else if !errors.Is(err, ErrInvalidChallenge) {
+			t.Fatal(err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("successful consumers = %d", successes)
+	}
+}
