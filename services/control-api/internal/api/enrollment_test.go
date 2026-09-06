@@ -3,9 +3,11 @@ package api_test
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,5 +89,68 @@ func TestEnrollmentHandlerRequiresDependencies(t *testing.T) {
 	}
 	if _, err := api.NewEnrollmentHandler(accountAuthenticator{}, store, nil); err == nil {
 		t.Fatal("accepted missing clock")
+	}
+}
+
+func TestEnrollmentChallengeHTTP(t *testing.T) {
+	now := time.Unix(1800000000, 0)
+	for _, tc := range []struct {
+		name, body, contentType, account string
+		status                           int
+	}{
+		{"valid", `{"device_id":"laptop"}`, "application/json; charset=utf-8", "account", 201},
+		{"unauthenticated", `{"device_id":"laptop"}`, "application/json", "", 401},
+		{"invalid device", `{"device_id":"INVALID"}`, "application/json", "account", 400},
+		{"account spoof", `{"device_id":"laptop","account_id":"victim"}`, "application/json", "account", 400},
+		{"trailing json", `{"device_id":"laptop"} {}`, "application/json", "account", 400},
+		{"invalid json", `{`, "application/json", "account", 400},
+		{"null", `null`, "application/json", "account", 400},
+		{"wrong type", `{"device_id":1}`, "application/json", "account", 400},
+		{"media type", `{}`, "text/plain", "account", 415},
+		{"oversized", `{"device_id":"` + strings.Repeat("a", 5000) + `"}`, "application/json", "account", 413},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := identity.NewEnrollmentStore(time.Minute, 1)
+			handler, err := api.NewEnrollmentHandler(accountAuthenticator{account: tc.account}, store, func() time.Time { return now })
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest("POST", "/api/v1/enrollment/challenges", strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", tc.contentType)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != tc.status {
+				t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+			}
+			if tc.status == 201 {
+				var challenge identity.Challenge
+				if err := json.Unmarshal(response.Body.Bytes(), &challenge); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.Consume("account", "laptop", challenge.Value, now); err != nil {
+					t.Fatalf("account binding: %v", err)
+				}
+				if !challenge.ExpiresAt.Equal(now.Add(time.Minute)) {
+					t.Fatal("wrong expiry")
+				}
+			}
+		})
+	}
+}
+
+func TestChallengeCapacityHTTP(t *testing.T) {
+	store, _ := identity.NewEnrollmentStore(time.Minute, 1)
+	handler, err := api.NewEnrollmentHandler(accountAuthenticator{account: "account"}, store, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []int{201, 503} {
+		request := httptest.NewRequest("POST", "/api/v1/enrollment/challenges", strings.NewReader(`{"device_id":"laptop"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != status {
+			t.Fatalf("status = %d, want %d", response.Code, status)
+		}
 	}
 }
