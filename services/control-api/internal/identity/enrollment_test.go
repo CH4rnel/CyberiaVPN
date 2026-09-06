@@ -2,6 +2,8 @@ package identity
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"testing"
 	"time"
@@ -88,5 +90,79 @@ func TestConcurrentChallengeConsumption(t *testing.T) {
 	}
 	if successes != 1 {
 		t.Fatalf("successful consumers = %d", successes)
+	}
+}
+
+func enrollmentRequest(t *testing.T, store *EnrollmentStore, account, device string, now time.Time) EnrollmentRequest {
+	t.Helper()
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge, err := store.Issue(account, device, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := EnrollmentRequest{AccountID: account, DeviceID: device, PublicKey: public, Challenge: challenge.Value}
+	request.Signature = ed25519.Sign(private, request.SigningMessage())
+	return request
+}
+
+func TestEnrollVerifiesBeforeConsuming(t *testing.T) {
+	now := time.Now()
+	store, _ := NewEnrollmentStore(time.Minute, 10)
+	request := enrollmentRequest(t, store, "account", "device", now)
+	bad := request
+	bad.Signature = make([]byte, ed25519.SignatureSize)
+	if _, err := store.Enroll(bad, now); !errors.Is(err, ErrInvalidProof) {
+		t.Fatalf("invalid proof: %v", err)
+	}
+	device, err := store.Enroll(request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if device.AccountID != request.AccountID || !bytes.Equal(device.PublicKey, request.PublicKey) {
+		t.Fatalf("device: %+v", device)
+	}
+	if _, err := store.Enroll(request, now); err == nil {
+		t.Fatal("accepted replay")
+	}
+	other := enrollmentRequest(t, store, "other-account", "device", now)
+	if _, err := store.Enroll(other, now); !errors.Is(err, ErrDeviceExists) {
+		t.Fatalf("device takeover: %v", err)
+	}
+}
+
+func TestConcurrentEnrollmentHasOneWinner(t *testing.T) {
+	now := time.Now()
+	store, _ := NewEnrollmentStore(time.Minute, 10)
+	request := enrollmentRequest(t, store, "account", "device", now)
+	results := make(chan error, 20)
+	for range 20 {
+		go func() { _, err := store.Enroll(request, now); results <- err }()
+	}
+	successes := 0
+	for range 20 {
+		if err := <-results; err == nil {
+			successes++
+		} else if !errors.Is(err, ErrDeviceExists) && !errors.Is(err, ErrInvalidChallenge) {
+			t.Fatal(err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("enrollments = %d", successes)
+	}
+}
+
+func TestEnrollRejectsExpiredAndUnissuedChallenges(t *testing.T) {
+	now := time.Now()
+	store, _ := NewEnrollmentStore(time.Minute, 10)
+	request := enrollmentRequest(t, store, "account", "device", now)
+	other, _ := NewEnrollmentStore(time.Minute, 10)
+	if _, err := other.Enroll(request, now); !errors.Is(err, ErrInvalidChallenge) {
+		t.Fatalf("unissued: %v", err)
+	}
+	if _, err := store.Enroll(request, now.Add(time.Minute)); !errors.Is(err, ErrInvalidChallenge) {
+		t.Fatalf("expired: %v", err)
 	}
 }

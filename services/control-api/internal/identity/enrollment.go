@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
@@ -26,6 +27,7 @@ type pendingChallenge struct {
 // EnrollmentStore is process-local and must be constructed with NewEnrollmentStore.
 // It must not be copied after first use. Methods are safe for concurrent calls.
 type EnrollmentStore struct {
+	devices    map[string]DeviceIdentity
 	mu         sync.Mutex
 	ttl        time.Duration
 	capacity   int
@@ -86,4 +88,33 @@ func (store *EnrollmentStore) consumeLocked(accountID, deviceID string, value []
 	}
 	delete(store.challenges, digest)
 	return nil
+}
+
+var ErrDeviceExists = errors.New("device ID already registered")
+
+// Enroll verifies proof before atomically consuming the nonce and registering
+// a globally unique device ID. Existing devices cannot be overwritten.
+func (store *EnrollmentStore) Enroll(request EnrollmentRequest, now time.Time) (DeviceIdentity, error) {
+	device, err := VerifyEnrollment(request)
+	if err != nil {
+		return DeviceIdentity{}, err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if _, exists := store.devices[device.DeviceID]; exists {
+		return DeviceIdentity{}, ErrDeviceExists
+	}
+	if err := store.consumeLocked(device.AccountID, device.DeviceID, request.Challenge, now); err != nil {
+		return DeviceIdentity{}, err
+	}
+	if store.devices == nil {
+		store.devices = make(map[string]DeviceIdentity)
+	}
+	store.devices[device.DeviceID] = cloneDevice(device)
+	return device, nil
+}
+
+func cloneDevice(device DeviceIdentity) DeviceIdentity {
+	device.PublicKey = bytes.Clone(device.PublicKey)
+	return device
 }
