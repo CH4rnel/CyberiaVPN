@@ -154,3 +154,109 @@ func TestChallengeCapacityHTTP(t *testing.T) {
 		}
 	}
 }
+
+func postEnrollment(t *testing.T, handler http.Handler, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("POST", path, strings.NewReader(string(encoded)))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func TestHTTPEnrollmentRoundTrip(t *testing.T) {
+	now := time.Unix(1800000000, 0)
+	store, _ := identity.NewEnrollmentStore(time.Minute, 10)
+	handler, err := api.NewEnrollmentHandler(accountAuthenticator{account: "account"}, store, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued := postEnrollment(t, handler, "/api/v1/enrollment/challenges", map[string]string{"device_id": "laptop"})
+	if issued.Code != 201 {
+		t.Fatalf("issue: %s", issued.Body.String())
+	}
+	var challenge identity.Challenge
+	if err := json.Unmarshal(issued.Body.Bytes(), &challenge); err != nil {
+		t.Fatal(err)
+	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof := identity.EnrollmentRequest{AccountID: "account", DeviceID: "laptop", PublicKey: public, Challenge: challenge.Value}
+	signature := ed25519.Sign(private, proof.SigningMessage())
+	body := map[string]any{"device_id": "laptop", "public_key": public, "challenge": challenge.Value, "signature": make([]byte, ed25519.SignatureSize)}
+	if response := postEnrollment(t, handler, "/api/v1/devices", body); response.Code != 400 {
+		t.Fatalf("bad proof: %d %s", response.Code, response.Body.String())
+	}
+	body["signature"] = signature
+	foreign, err := api.NewEnrollmentHandler(accountAuthenticator{account: "other"}, store, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := postEnrollment(t, foreign, "/api/v1/devices", body); response.Code != 400 {
+		t.Fatalf("cross-account: %d", response.Code)
+	}
+	body["account_id"] = "victim"
+	if response := postEnrollment(t, handler, "/api/v1/devices", body); response.Code != 400 {
+		t.Fatalf("account spoof: %d", response.Code)
+	}
+	delete(body, "account_id")
+	registered := postEnrollment(t, handler, "/api/v1/devices", body)
+	if registered.Code != 201 {
+		t.Fatalf("register: %d %s", registered.Code, registered.Body.String())
+	}
+	var device struct {
+		DeviceID  string `json:"device_id"`
+		PublicKey []byte `json:"public_key"`
+		KeyID     string `json:"key_id"`
+	}
+	if err := json.Unmarshal(registered.Body.Bytes(), &device); err != nil {
+		t.Fatal(err)
+	}
+	if device.DeviceID != "laptop" || device.KeyID == "" || string(device.PublicKey) != string(public) {
+		t.Fatalf("device: %+v", device)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/v1/devices/laptop", nil))
+	if response.Code != 200 || response.Body.String() != registered.Body.String() {
+		t.Fatalf("lookup: %d %s", response.Code, response.Body.String())
+	}
+	if response := postEnrollment(t, handler, "/api/v1/devices", body); response.Code != 409 {
+		t.Fatalf("replay: %d", response.Code)
+	}
+}
+
+func TestHTTPEnrollmentExpiryAndAuthentication(t *testing.T) {
+	now := time.Now()
+	store, _ := identity.NewEnrollmentStore(time.Minute, 10)
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge, err := store.Issue("account", "laptop", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof := identity.EnrollmentRequest{AccountID: "account", DeviceID: "laptop", PublicKey: public, Challenge: challenge.Value}
+	body := map[string]any{"device_id": "laptop", "public_key": public, "challenge": challenge.Value, "signature": ed25519.Sign(private, proof.SigningMessage())}
+	for _, tc := range []struct {
+		account string
+		status  int
+	}{{"", 401}, {"account", 400}} {
+		handler, err := api.NewEnrollmentHandler(accountAuthenticator{account: tc.account}, store, func() time.Time { return challenge.ExpiresAt })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response := postEnrollment(t, handler, "/api/v1/devices", body); response.Code != tc.status {
+			t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+		}
+	}
+	if _, err := store.Device("account", "laptop"); !errors.Is(err, identity.ErrDeviceNotFound) {
+		t.Fatalf("persisted failed registration: %v", err)
+	}
+}

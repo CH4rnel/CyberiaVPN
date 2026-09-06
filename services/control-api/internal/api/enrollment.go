@@ -73,6 +73,30 @@ func NewEnrollmentHandler(auth AccountAuthenticator, store EnrollmentRepository,
 		}
 		writeJSON(writer, http.StatusCreated, challenge)
 	})
+	mux.HandleFunc("POST /api/v1/devices", func(writer http.ResponseWriter, request *http.Request) {
+		account, ok := authenticateAccount(writer, request, auth)
+		if !ok {
+			return
+		}
+		var body struct {
+			DeviceID  string `json:"device_id"`
+			PublicKey []byte `json:"public_key"`
+			Challenge []byte `json:"challenge"`
+			Signature []byte `json:"signature"`
+		}
+		if !decodeEnrollmentJSON(writer, request, &body) {
+			return
+		}
+		device, err := store.Enroll(identity.EnrollmentRequest{
+			AccountID: account, DeviceID: body.DeviceID, PublicKey: body.PublicKey,
+			Challenge: body.Challenge, Signature: body.Signature,
+		}, now())
+		if err != nil {
+			writeEnrollmentError(writer, err)
+			return
+		}
+		writeJSON(writer, http.StatusCreated, deviceResponse{DeviceID: device.DeviceID, PublicKey: device.PublicKey, KeyID: device.KeyID})
+	})
 	return securityHeaders(mux), nil
 }
 
@@ -117,8 +141,10 @@ func decodeEnrollmentJSON(writer http.ResponseWriter, request *http.Request, val
 
 func writeEnrollmentError(writer http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, identity.ErrInvalidEnrollment):
+	case errors.Is(err, identity.ErrInvalidEnrollment), errors.Is(err, identity.ErrInvalidProof), errors.Is(err, identity.ErrInvalidChallenge):
 		writeJSON(writer, http.StatusBadRequest, errorResponse{Error: "invalid enrollment"})
+	case errors.Is(err, identity.ErrDeviceExists):
+		writeJSON(writer, http.StatusConflict, errorResponse{Error: "device registration conflict"})
 	case errors.Is(err, identity.ErrEnrollmentCapacity):
 		writeJSON(writer, http.StatusServiceUnavailable, errorResponse{Error: "enrollment capacity reached"})
 	default:
