@@ -121,9 +121,14 @@ func signingMessage(config DeviceConfig) []byte {
 	for _, resolver := range config.DNS {
 		message = appendField(message, []byte(resolver.String()))
 	}
-	message = binary.BigEndian.AppendUint64(message, uint64(config.IssuedAt.Unix()))
-	message = binary.BigEndian.AppendUint64(message, uint64(config.ExpiresAt.Unix()))
+	message = appendTime(message, config.IssuedAt)
+	message = appendTime(message, config.ExpiresAt)
 	return message
+}
+
+func appendTime(destination []byte, value time.Time) []byte {
+	destination = binary.BigEndian.AppendUint64(destination, uint64(value.Unix()))
+	return binary.BigEndian.AppendUint32(destination, uint32(value.Nanosecond()))
 }
 
 func appendField(destination, field []byte) []byte {
