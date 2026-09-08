@@ -31,9 +31,13 @@ Current component progress (not M1 completion):
 - [x] Node metadata validation and lifecycle transitions.
 - [x] Public WireGuard profile validation and kill-switch state model.
 - [x] Operational metric validation and bounded reconnect policy.
-- [ ] Account authentication and authorization at HTTP boundaries.
-- [ ] Atomic consumption of expiring enrollment challenges and device persistence.
-- [ ] Authenticated configuration delivery and client rollback protection.
+- [x] Account-scoped HTTP handlers with an injected authentication boundary.
+- [x] Atomic consumption of expiring enrollment challenges and in-memory device registration.
+- [x] Authenticated configuration delivery handler with signature and validity checks.
+- [x] Device-bound configuration update verification rejecting replay and rollback.
+- [ ] Account authentication provider and protected handler integration in the server.
+- [ ] Durable device and enrollment challenge persistence.
+- [ ] Client integration with durable, serialized storage of accepted configuration versions.
 - [ ] Managed WireGuard node and real transport adapter.
 - [ ] OS firewall implementation of the kill-switch contract.
 - [ ] End-to-end connect, disconnect and fail-safe integration tests.

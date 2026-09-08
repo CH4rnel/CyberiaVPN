@@ -32,9 +32,13 @@ Development follows the TDD, XP and SOLID guidance in
 The repository includes device proof-of-possession verification, signed public
 configuration envelopes, in-memory configuration and node stores, deterministic
 routing, retry policies and a kill-switch state machine. These are domain
-components; the HTTP service currently exposes only health and version endpoints.
-M1 still requires authenticated API integration, replay-safe enrollment, a real
-WireGuard adapter, OS firewall integration and an end-to-end connection test.
+components. Separate HTTP handlers implement account-scoped, replay-safe device
+enrollment and verified configuration delivery. Configuration updates can be
+checked against a trusted device ID and the last accepted version. The development
+server currently exposes only health and version endpoints.
+M1 still requires an account authentication provider and server wiring, durable
+device and client version storage, a real WireGuard adapter, OS firewall
+integration and an end-to-end connection test.
 
 ## Local development
 
