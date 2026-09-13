@@ -17,7 +17,17 @@ var version = "dev"
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	handler := api.NewHandler(api.Metadata{Version: version})
+	config, err := loadRuntimeConfig()
+	if err != nil {
+		logger.Error("control API configuration failed", "error", err)
+		return
+	}
+	handler, runtime, err := newRuntimeHandler(api.Metadata{Version: version}, config, time.Now)
+	if err != nil {
+		logger.Error("control API initialization failed", "error", err)
+		return
+	}
+	defer runtime.Close()
 	server := &http.Server{
 		Addr:              address(),
 		Handler:           handler,
