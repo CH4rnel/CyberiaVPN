@@ -16,3 +16,5 @@ coverage.out
 !.env.example
 *.pem
 *.key
+runtime.json
+state/
