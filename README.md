@@ -36,9 +36,9 @@ components. Separate HTTP handlers implement account-scoped, replay-safe device
 enrollment and verified configuration delivery. Configuration updates can be
 checked against a trusted device ID and the last accepted version. The development
 server currently exposes only health and version endpoints.
-M1 still requires an account authentication provider and server wiring, durable
-device and client version storage, a real WireGuard adapter, OS firewall
-integration and an end-to-end connection test.
+M1 now has a local authenticated enrollment-to-configuration path with durable
+state. It still requires a real WireGuard adapter, OS firewall integration and
+an end-to-end tunnel connection test.
 
 ## Local development
 
@@ -51,7 +51,7 @@ make check
 Start the development API in another terminal:
 
 ```sh
-go run ./services/control-api/cmd/server
+CYBERIA_RUNTIME_CONFIG=runtime.json go run ./services/control-api/cmd/server
 ```
 
 It listens on `127.0.0.1:8080` by default. Set `CYBERIA_API_ADDRESS` to override
@@ -68,6 +68,12 @@ shutdown exits with a nonzero status.
 
 See [the current component contracts](docs/architecture/component-contracts.md)
 for validation rules and integration boundaries.
+
+`runtime.json` must be mode `0600` and contains `state_dir`, `credentials`
+(account ID, SHA-256 token digest and expiry) and trusted configuration signing
+keys. The state directory must be private. Publish an already validated public
+device configuration with `go run ./services/control-api/cmd/config-publisher`
+and its `-state-dir`, `-input`, `-key-id` and `-private-key-hex` arguments.
 
 ## License
 

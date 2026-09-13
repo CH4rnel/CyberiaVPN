@@ -35,9 +35,10 @@ Current component progress (not M1 completion):
 - [x] Atomic consumption of expiring enrollment challenges and in-memory device registration.
 - [x] Authenticated configuration delivery handler with signature and validity checks.
 - [x] Device-bound configuration update verification rejecting replay and rollback.
-- [ ] Account authentication provider and protected handler integration in the server.
-- [ ] Durable device and enrollment challenge persistence.
-- [ ] Client integration with durable, serialized storage of accepted configuration versions.
+- [x] Expiring bearer-token authentication and protected handler integration in the server.
+- [x] Durable local device, enrollment challenge and signed configuration persistence.
+- [x] Client helper with durable, serialized storage of accepted configuration versions.
+- [x] Local end-to-end enrollment, configuration delivery and rollback-rejection scenario.
 - [ ] Managed WireGuard node and real transport adapter.
 - [ ] OS firewall implementation of the kill-switch contract.
 - [ ] End-to-end connect, disconnect and fail-safe integration tests.
