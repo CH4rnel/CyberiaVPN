@@ -71,7 +71,7 @@ func TestConfigurationDelivery(t *testing.T) {
 			}
 			config := configuration.DeviceConfig{Version: 2, DeviceID: deviceID, NodeID: "node", Transport: configuration.TransportWireGuard,
 				Endpoint: netip.MustParseAddrPort("192.0.2.1:51820"), DNS: []netip.Addr{netip.MustParseAddr("192.0.2.53")},
-				WireGuard: configuration.WireGuardParameters{PeerPublicKey: bytes.Repeat([]byte{1}, 32), TunnelAddresses: []netip.Prefix{netip.MustParsePrefix("10.0.0.2/24")}, MTU: 1420, PersistentKeepaliveSecond: 25},
+				WireGuard: configuration.WireGuardParameters{PeerPublicKey: bytes.Repeat([]byte{1}, 32), TunnelAddresses: []netip.Prefix{netip.MustParsePrefix("10.0.0.2/24")}, AllowedIPs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}, MTU: 1420, PersistentKeepaliveSecond: 25},
 				IssuedAt:  now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour)}
 			envelope, err := configuration.Seal(config, now, signer)
 			if err != nil {
@@ -198,7 +198,7 @@ func TestStoredConfigurationHTTPUpgrade(t *testing.T) {
 	for _, version := range []uint64{1, 2} {
 		config := configuration.DeviceConfig{Version: version, DeviceID: "device", NodeID: "node", Transport: configuration.TransportWireGuard,
 			Endpoint: netip.MustParseAddrPort("192.0.2.1:51820"), DNS: []netip.Addr{netip.MustParseAddr("192.0.2.53")},
-			WireGuard: configuration.WireGuardParameters{PeerPublicKey: bytes.Repeat([]byte{1}, 32), TunnelAddresses: []netip.Prefix{netip.MustParsePrefix("10.0.0.2/24")}, MTU: 1420, PersistentKeepaliveSecond: 25},
+			WireGuard: configuration.WireGuardParameters{PeerPublicKey: bytes.Repeat([]byte{1}, 32), TunnelAddresses: []netip.Prefix{netip.MustParsePrefix("10.0.0.2/24")}, AllowedIPs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}, MTU: 1420, PersistentKeepaliveSecond: 25},
 			IssuedAt:  now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour)}
 		envelope, err := configuration.Seal(config, now, signer)
 		if err != nil {

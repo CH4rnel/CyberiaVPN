@@ -37,6 +37,7 @@ type DeviceConfig struct {
 type WireGuardParameters struct {
 	PeerPublicKey             []byte         `json:"peer_public_key"`
 	TunnelAddresses           []netip.Prefix `json:"tunnel_addresses"`
+	AllowedIPs                []netip.Prefix `json:"allowed_ips"`
 	MTU                       uint16         `json:"mtu"`
 	PersistentKeepaliveSecond uint16         `json:"persistent_keepalive_seconds"`
 }
@@ -116,6 +117,20 @@ func (parameters WireGuardParameters) Validate() error {
 			return fmt.Errorf("%w: duplicate WireGuard tunnel address", ErrInvalid)
 		}
 		addresses[address] = struct{}{}
+	}
+	if len(parameters.AllowedIPs) == 0 || len(parameters.AllowedIPs) > 64 {
+		return fmt.Errorf("%w: WireGuard requires between 1 and 64 allowed IP prefixes", ErrInvalid)
+	}
+	allowed := make(map[netip.Prefix]struct{}, len(parameters.AllowedIPs))
+	for _, prefix := range parameters.AllowedIPs {
+		address := prefix.Addr()
+		if !prefix.IsValid() || prefix != prefix.Masked() || address.IsMulticast() || address.Is4In6() {
+			return fmt.Errorf("%w: invalid WireGuard allowed IP prefix", ErrInvalid)
+		}
+		if _, exists := allowed[prefix]; exists {
+			return fmt.Errorf("%w: duplicate WireGuard allowed IP prefix", ErrInvalid)
+		}
+		allowed[prefix] = struct{}{}
 	}
 	if parameters.MTU < 1280 || parameters.MTU > 9000 {
 		return fmt.Errorf("%w: WireGuard MTU is outside safe bounds", ErrInvalid)

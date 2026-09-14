@@ -16,7 +16,7 @@ func TestSignedConfigurationUsesStablePublicJSONFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded := string(data)
-	for _, field := range []string{"\"config\"", "\"key_id\"", "\"signature\"", "\"peer_public_key\"", "\"tunnel_addresses\"", "\"persistent_keepalive_seconds\""} {
+	for _, field := range []string{"\"config\"", "\"key_id\"", "\"signature\"", "\"peer_public_key\"", "\"tunnel_addresses\"", "\"allowed_ips\"", "\"persistent_keepalive_seconds\""} {
 		if !strings.Contains(encoded, field) {
 			t.Fatalf("missing %s in %s", field, encoded)
 		}

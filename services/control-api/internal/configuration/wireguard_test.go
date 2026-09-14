@@ -21,6 +21,13 @@ func TestWireGuardParametersRejectUnsafePublicSettings(t *testing.T) {
 		},
 		func(parameters *configuration.WireGuardParameters) { parameters.MTU = 1279 },
 		func(parameters *configuration.WireGuardParameters) { parameters.PersistentKeepaliveSecond = 301 },
+		func(parameters *configuration.WireGuardParameters) { parameters.AllowedIPs = nil },
+		func(parameters *configuration.WireGuardParameters) {
+			parameters.AllowedIPs = []netip.Prefix{netip.MustParsePrefix("10.0.0.1/24")}
+		},
+		func(parameters *configuration.WireGuardParameters) {
+			parameters.AllowedIPs = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24"), netip.MustParsePrefix("10.0.0.0/24")}
+		},
 	} {
 		config := validConfig(testNow())
 		mutate(&config.WireGuard)
