@@ -11,6 +11,9 @@ use std::time::{Duration, Instant};
 
 mod wireguard;
 
+#[cfg(target_os = "linux")]
+pub mod linux;
+
 pub use wireguard::{TunnelAddress, WireGuardAdapter, WireGuardBackend, WireGuardConfig};
 
 /// A protocol implemented by a transport adapter.
