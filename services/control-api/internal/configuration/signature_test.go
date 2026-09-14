@@ -138,3 +138,43 @@ func TestSignatureBindsSubsecondValidity(t *testing.T) {
 		t.Fatalf("equivalent instant rejected: %v", err)
 	}
 }
+
+func TestSignatureBindsWireGuardConnectionParameters(t *testing.T) {
+	now := time.Unix(1_788_563_400, 0).UTC()
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := configuration.NewEd25519Signer("config-key-1", private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := configuration.NewEd25519Verifier(map[string]ed25519.PublicKey{"config-key-1": public})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := configuration.Seal(validConfig(now), now, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*configuration.DeviceConfig)
+	}{
+		{"peer public key", func(config *configuration.DeviceConfig) { config.WireGuard.PeerPublicKey[0] ^= 1 }},
+		{"tunnel address", func(config *configuration.DeviceConfig) {
+			config.WireGuard.TunnelAddresses[0] = netip.MustParsePrefix("10.0.1.2/24")
+		}},
+		{"mtu", func(config *configuration.DeviceConfig) { config.WireGuard.MTU = 1280 }},
+		{"keepalive", func(config *configuration.DeviceConfig) { config.WireGuard.PersistentKeepaliveSecond = 1 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tampered := envelope
+			tampered.Config = configuration.DeviceConfig{Version: envelope.Config.Version, DeviceID: envelope.Config.DeviceID, NodeID: envelope.Config.NodeID, Transport: envelope.Config.Transport, Endpoint: envelope.Config.Endpoint, DNS: append([]netip.Addr(nil), envelope.Config.DNS...), WireGuard: configuration.WireGuardParameters{PeerPublicKey: append([]byte(nil), envelope.Config.WireGuard.PeerPublicKey...), TunnelAddresses: append([]netip.Prefix(nil), envelope.Config.WireGuard.TunnelAddresses...), MTU: envelope.Config.WireGuard.MTU, PersistentKeepaliveSecond: envelope.Config.WireGuard.PersistentKeepaliveSecond}, IssuedAt: envelope.Config.IssuedAt, ExpiresAt: envelope.Config.ExpiresAt}
+			tc.mutate(&tampered.Config)
+			if _, err := configuration.Open(tampered, now, verifier); !errors.Is(err, configuration.ErrInvalidSignature) {
+				t.Fatalf("modified %s accepted: %v", tc.name, err)
+			}
+		})
+	}
+}

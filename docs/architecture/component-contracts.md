@@ -55,7 +55,8 @@ The JSON envelope uses `config`, `key_id` and `signature`. `config` contains
 peer public keys are base64; endpoints, DNS addresses and tunnel prefixes are strings;
 timestamps use RFC 3339 with subsecond precision. Versions are unsigned 64-bit
 integers and must be decoded without floating-point precision loss. The signature
-covers the canonical binary configuration, not the JSON representation.
+covers the canonical binary configuration, including every WireGuard peer,
+tunnel-address, MTU and keepalive field, not the JSON representation.
 
 `OpenForDevice` verifies the signature and validity, matches a trusted local
 device ID and requires a version strictly greater than the last accepted version.
