@@ -16,6 +16,13 @@ pub struct TunnelAddress {
     pub prefix_length: u8,
 }
 
+/// One network prefix accepted from the configured `WireGuard` peer.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct AllowedIp {
+    pub network: IpAddr,
+    pub prefix_length: u8,
+}
+
 /// Public parameters for a `WireGuard` peer. The device private key is
 /// intentionally absent and must be obtained by the adapter from its local
 /// platform key store.
@@ -24,6 +31,7 @@ pub struct WireGuardConfig {
     pub peer_public_key: [u8; 32],
     pub endpoint: Endpoint,
     pub tunnel_addresses: Vec<TunnelAddress>,
+    pub allowed_ips: Vec<AllowedIp>,
     pub persistent_keepalive_seconds: Option<u16>,
     pub mtu: u16,
 }
@@ -70,6 +78,19 @@ impl WireGuardConfig {
                 ));
             }
         }
+        if self.allowed_ips.is_empty() || self.allowed_ips.len() > 64 {
+            return Err(TransportError::InvalidConfig(
+                "WireGuard allowed IP list must contain between 1 and 64 prefixes",
+            ));
+        }
+        let mut allowed_ips = HashSet::with_capacity(self.allowed_ips.len());
+        for allowed_ip in &self.allowed_ips {
+            if !valid_network(*allowed_ip) || !allowed_ips.insert(*allowed_ip) {
+                return Err(TransportError::InvalidConfig(
+                    "invalid or duplicate WireGuard allowed IP prefix",
+                ));
+            }
+        }
         if self
             .persistent_keepalive_seconds
             .is_some_and(|seconds| seconds == 0 || seconds > MAXIMUM_KEEPALIVE_SECONDS)
@@ -84,6 +105,35 @@ impl WireGuardConfig {
             ));
         }
         Ok(())
+    }
+}
+
+fn valid_network(allowed_ip: AllowedIp) -> bool {
+    match allowed_ip.network {
+        IpAddr::V4(address) => {
+            if allowed_ip.prefix_length > 32 || address.is_multicast() {
+                return false;
+            }
+            let bits = u32::from(address);
+            let mask = if allowed_ip.prefix_length == 0 {
+                0
+            } else {
+                u32::MAX << (32 - allowed_ip.prefix_length)
+            };
+            bits & mask == bits
+        }
+        IpAddr::V6(address) => {
+            if allowed_ip.prefix_length > 128 || address.is_multicast() {
+                return false;
+            }
+            let bits = u128::from(address);
+            let mask = if allowed_ip.prefix_length == 0 {
+                0
+            } else {
+                u128::MAX << (128 - allowed_ip.prefix_length)
+            };
+            bits & mask == bits
+        }
     }
 }
 

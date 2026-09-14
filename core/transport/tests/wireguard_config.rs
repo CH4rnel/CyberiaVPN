@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroU16;
 
-use cyberia_transport::{Endpoint, TransportError, TunnelAddress, WireGuardConfig};
+use cyberia_transport::{AllowedIp, Endpoint, TransportError, TunnelAddress, WireGuardConfig};
 
 fn valid_config() -> WireGuardConfig {
     WireGuardConfig {
@@ -13,6 +13,10 @@ fn valid_config() -> WireGuardConfig {
         tunnel_addresses: vec![TunnelAddress {
             address: IpAddr::V4(Ipv4Addr::new(10, 42, 0, 2)),
             prefix_length: 32,
+        }],
+        allowed_ips: vec![AllowedIp {
+            network: "0.0.0.0".parse().unwrap(),
+            prefix_length: 0,
         }],
         persistent_keepalive_seconds: Some(25),
         mtu: 1_420,
@@ -86,6 +90,34 @@ fn accepts_distinct_dual_stack_tunnel_addresses() {
     config.tunnel_addresses.push(TunnelAddress {
         address: "fd00::2".parse().unwrap(),
         prefix_length: 128,
+    });
+    assert_eq!(config.validate(), Ok(()));
+}
+
+#[test]
+fn rejects_missing_non_network_and_duplicate_allowed_ips() {
+    let mut missing = valid_config();
+    missing.allowed_ips.clear();
+    assert!(missing.validate().is_err());
+
+    let mut host_bits = valid_config();
+    host_bits.allowed_ips[0] = AllowedIp {
+        network: "10.0.0.1".parse().unwrap(),
+        prefix_length: 24,
+    };
+    assert!(host_bits.validate().is_err());
+
+    let mut duplicate = valid_config();
+    duplicate.allowed_ips.push(duplicate.allowed_ips[0]);
+    assert!(duplicate.validate().is_err());
+}
+
+#[test]
+fn accepts_dual_stack_default_allowed_ips() {
+    let mut config = valid_config();
+    config.allowed_ips.push(AllowedIp {
+        network: "::".parse().unwrap(),
+        prefix_length: 0,
     });
     assert_eq!(config.validate(), Ok(()));
 }

@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use cyberia_transport::linux::{CommandRunner, CommandSpec, LinuxTools, LinuxWireGuardBackend};
 use cyberia_transport::{
-    CancellationToken, ConnectContext, Endpoint, TransportError, TunnelAddress, WireGuardBackend,
-    WireGuardConfig,
+    AllowedIp, CancellationToken, ConnectContext, Endpoint, TransportError, TunnelAddress,
+    WireGuardBackend, WireGuardConfig,
 };
 
 struct Recorder {
@@ -60,6 +60,10 @@ fn profile() -> WireGuardConfig {
         tunnel_addresses: vec![TunnelAddress {
             address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
             prefix_length: 24,
+        }],
+        allowed_ips: vec![AllowedIp {
+            network: "0.0.0.0".parse().unwrap(),
+            prefix_length: 0,
         }],
         persistent_keepalive_seconds: Some(25),
         mtu: 1420,

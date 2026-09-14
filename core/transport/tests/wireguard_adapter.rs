@@ -2,9 +2,9 @@ use std::num::NonZeroU16;
 use std::time::{Duration, Instant};
 
 use cyberia_transport::{
-    CancellationToken, ConnectContext, Endpoint, HealthStatus, Transport, TransportConfig,
-    TransportError, TransportHealth, TransportKind, TunnelAddress, WireGuardAdapter,
-    WireGuardBackend, WireGuardConfig,
+    AllowedIp, CancellationToken, ConnectContext, Endpoint, HealthStatus, Transport,
+    TransportConfig, TransportError, TransportHealth, TransportKind, TunnelAddress,
+    WireGuardAdapter, WireGuardBackend, WireGuardConfig,
 };
 
 #[derive(Default)]
@@ -50,6 +50,10 @@ fn profile() -> WireGuardConfig {
         tunnel_addresses: vec![TunnelAddress {
             address: "10.0.0.2".parse().unwrap(),
             prefix_length: 24,
+        }],
+        allowed_ips: vec![AllowedIp {
+            network: "0.0.0.0".parse().unwrap(),
+            prefix_length: 0,
         }],
         persistent_keepalive_seconds: Some(25),
         mtu: 1420,
