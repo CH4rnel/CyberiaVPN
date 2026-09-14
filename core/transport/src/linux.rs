@@ -145,6 +145,13 @@ impl<R: CommandRunner> LinuxWireGuardBackend<R> {
             encode_key(&profile.peer_public_key),
             "endpoint".into(),
             endpoint(&profile.endpoint),
+            "allowed-ips".into(),
+            profile
+                .allowed_ips
+                .iter()
+                .map(|allowed_ip| format!("{}/{}", allowed_ip.network, allowed_ip.prefix_length))
+                .collect::<Vec<_>>()
+                .join(","),
         ];
         if let Some(seconds) = profile.persistent_keepalive_seconds {
             arguments.extend(["persistent-keepalive".into(), seconds.to_string()]);

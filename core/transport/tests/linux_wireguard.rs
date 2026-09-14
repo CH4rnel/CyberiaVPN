@@ -61,10 +61,16 @@ fn profile() -> WireGuardConfig {
             address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
             prefix_length: 24,
         }],
-        allowed_ips: vec![AllowedIp {
-            network: "0.0.0.0".parse().unwrap(),
-            prefix_length: 0,
-        }],
+        allowed_ips: vec![
+            AllowedIp {
+                network: "0.0.0.0".parse().unwrap(),
+                prefix_length: 0,
+            },
+            AllowedIp {
+                network: "::".parse().unwrap(),
+                prefix_length: 0,
+            },
+        ],
         persistent_keepalive_seconds: Some(25),
         mtu: 1420,
     }
@@ -79,13 +85,21 @@ fn context() -> ConnectContext {
 #[test]
 fn configures_and_removes_linux_wireguard_interface() {
     let (tools, directory) = tools("success");
+    let commands = Arc::new(Mutex::new(vec![]));
     let recorder = Recorder {
-        commands: Arc::new(Mutex::new(vec![])),
+        commands: Arc::clone(&commands),
         fail_at: None,
     };
     let mut backend = LinuxWireGuardBackend::new(tools, recorder).unwrap();
     backend.bring_up("wg0", &profile(), &context()).unwrap();
     backend.bring_down("wg0").unwrap();
+    let commands = commands.lock().unwrap();
+    let wireguard = &commands[1].arguments;
+    let allowed_index = wireguard
+        .iter()
+        .position(|argument| argument == "allowed-ips")
+        .unwrap();
+    assert_eq!(wireguard[allowed_index + 1], "0.0.0.0/0,::/0");
     fs::remove_dir_all(directory).unwrap();
 }
 
