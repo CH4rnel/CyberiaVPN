@@ -49,6 +49,9 @@ and rotation/revocation paths.
   can deny legitimate service.
 - Retry loops have deadlines, backoff, jitter and a terminal state.
 - Control-plane loss cannot silently change an established session's policy.
+- Linux transport helpers execute validated absolute programs without a shell;
+  WireGuard private-key files are private regular files; their contents never
+  enter command arguments, logs or distributed device configuration.
 
 ## Privacy abuse cases
 

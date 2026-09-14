@@ -92,11 +92,19 @@ calling adapter teardown. Therefore failed setup, invalid session identifiers
 and failed teardown retain blocking. Disabling filtering while a tunnel is
 active is rejected; always-on controllers cannot be disabled.
 
-These components define and test the platform boundary. They do not yet create
-real `WireGuard` interfaces, configure routes, or install OS firewall rules.
-The Linux backend must apply this contract with least privilege and transaction-
-like cleanup, and must be tested in an isolated network namespace before M1 can
-claim a working VPN tunnel.
+The Linux backend invokes absolute `ip` and `wg` executables directly without a
+shell. It requires a private-key file with permissions no broader than `0600`,
+creates the interface, applies the peer and endpoint, assigns tunnel addresses,
+sets MTU and brings the link up. A failure after interface creation triggers one
+bounded delete attempt. A failure to create the link does not delete an existing
+interface with the requested name. Teardown deletes only the interface owned by
+the active backend instance.
+
+Executable and key paths are deployment inputs and must reside on an operator-
+controlled filesystem. The backend does not install routes, DNS policy, NAT or
+OS firewall rules, and it is not wired into a client executable yet. Before M1
+can claim a working VPN tunnel, the complete path must run with least privilege
+inside an isolated Linux network namespace and demonstrate cleanup on failure.
 
 Operational values must be finite and non-negative. `packet_loss_ratio` is in
 `[0, 1]`, `connection_success` is a single binary observation (`0` or `1`), and
