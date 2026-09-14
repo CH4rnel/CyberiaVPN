@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 
-use crate::{Endpoint, TransportError};
+use crate::{
+    ConnectContext, Endpoint, HealthStatus, Session, Transport, TransportConfig, TransportError,
+    TransportHealth, TransportKind,
+};
 
 const MINIMUM_MTU: u16 = 1_280;
 const MAXIMUM_MTU: u16 = 9_000;
@@ -82,4 +85,124 @@ impl WireGuardConfig {
         }
         Ok(())
     }
+}
+
+/// Narrow platform boundary for creating and removing one `WireGuard` interface.
+/// Implementations must check `context` before starting work and must leave no
+/// interface behind when `bring_up` returns an error.
+pub trait WireGuardBackend: Send {
+    ///
+    /// # Errors
+    ///
+    /// Returns a bounded transport error when the platform cannot create the
+    /// interface or apply its profile.
+    fn bring_up(
+        &mut self,
+        interface: &str,
+        profile: &WireGuardConfig,
+        context: &ConnectContext,
+    ) -> Result<(), TransportError>;
+
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error when the platform cannot remove the interface.
+    fn bring_down(&mut self, interface: &str) -> Result<(), TransportError>;
+
+    fn health(&self) -> TransportHealth;
+}
+
+/// A lifecycle adapter over a platform-specific `WireGuard` backend. It does not
+/// hold private keys; the backend obtains them from its platform key store.
+pub struct WireGuardAdapter<B> {
+    interface: String,
+    profile: WireGuardConfig,
+    backend: B,
+    connected: bool,
+}
+
+impl<B: WireGuardBackend> WireGuardAdapter<B> {
+    /// Creates an adapter with a validated interface name and public profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::InvalidConfig`] for unsafe interface names or
+    /// invalid public peer parameters.
+    pub fn new(
+        interface: String,
+        profile: WireGuardConfig,
+        backend: B,
+    ) -> Result<Self, TransportError> {
+        if !valid_interface(&interface) {
+            return Err(TransportError::InvalidConfig(
+                "invalid WireGuard interface name",
+            ));
+        }
+        profile.validate()?;
+        Ok(Self {
+            interface,
+            profile,
+            backend,
+            connected: false,
+        })
+    }
+}
+
+impl<B: WireGuardBackend> Transport for WireGuardAdapter<B> {
+    fn kind(&self) -> TransportKind {
+        TransportKind::WireGuard
+    }
+
+    fn connect(
+        &mut self,
+        config: &TransportConfig,
+        context: &ConnectContext,
+    ) -> Result<Session, TransportError> {
+        if self.connected {
+            return Err(TransportError::AlreadyConnected);
+        }
+        if config.kind != TransportKind::WireGuard || config.endpoint != self.profile.endpoint {
+            return Err(TransportError::InvalidConfig(
+                "WireGuard transport parameters do not match profile",
+            ));
+        }
+        config.validate()?;
+        context.check()?;
+        self.backend
+            .bring_up(&self.interface, &self.profile, context)?;
+        self.connected = true;
+        Ok(Session {
+            id: self.interface.clone(),
+            transport: TransportKind::WireGuard,
+            established_at: std::time::Instant::now(),
+        })
+    }
+
+    fn disconnect(&mut self) -> Result<(), TransportError> {
+        if !self.connected {
+            return Err(TransportError::NotConnected);
+        }
+        self.backend.bring_down(&self.interface)?;
+        self.connected = false;
+        Ok(())
+    }
+
+    fn health(&self) -> TransportHealth {
+        if !self.connected {
+            return TransportHealth {
+                status: HealthStatus::Unavailable,
+                round_trip_time: None,
+                consecutive_failures: 0,
+            };
+        }
+        self.backend.health()
+    }
+}
+
+fn valid_interface(interface: &str) -> bool {
+    !interface.is_empty()
+        && interface.len() <= 15
+        && interface
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }

@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 mod wireguard;
 
-pub use wireguard::{TunnelAddress, WireGuardConfig};
+pub use wireguard::{TunnelAddress, WireGuardAdapter, WireGuardBackend, WireGuardConfig};
 
 /// A protocol implemented by a transport adapter.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
