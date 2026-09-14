@@ -37,8 +37,9 @@ enrollment and verified configuration delivery. Configuration updates can be
 checked against a trusted device ID and the last accepted version. The development
 server currently exposes only health and version endpoints.
 M1 now has a local authenticated enrollment-to-configuration path with durable
-state. It still requires a real WireGuard adapter, OS firewall integration and
-an end-to-end tunnel connection test.
+state, a validated `WireGuard` adapter boundary and a fail-secure connection
+controller. It still requires a real Linux `WireGuard` backend, OS firewall
+integration and an end-to-end tunnel connection test.
 
 ## Local development
 

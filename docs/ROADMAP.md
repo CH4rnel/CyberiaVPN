@@ -39,6 +39,8 @@ Current component progress (not M1 completion):
 - [x] Durable local device, enrollment challenge and signed configuration persistence.
 - [x] Client helper with durable, serialized storage of accepted configuration versions.
 - [x] Local end-to-end enrollment, configuration delivery and rollback-rejection scenario.
+- [x] WireGuard adapter lifecycle contract with validated platform backend boundary.
+- [x] Fail-secure transport controller that arms the kill switch before connect and teardown.
 - [ ] Managed WireGuard node and real transport adapter.
 - [ ] OS firewall implementation of the kill-switch contract.
 - [ ] End-to-end connect, disconnect and fail-safe integration tests.

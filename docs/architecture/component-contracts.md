@@ -72,6 +72,29 @@ same IP cannot appear twice, even with different prefix lengths. Distinct
 addresses in the same subnet and dual-stack addresses are allowed. Validation
 does not create an interface or install routes.
 
+## WireGuard adapter and fail-secure lifecycle
+
+`WireGuardAdapter` validates the public profile, a short local interface name,
+the requested `TransportKind` and endpoint before calling a platform backend.
+The adapter contains no device private key. A backend obtains that key from a
+platform-specific protected store and must remove any partially created
+interface if setup fails. A successful adapter session ID is the validated
+interface name. The adapter cannot report itself disconnected when backend
+teardown fails; callers must treat the tunnel as possibly live.
+
+`ConnectionController` coordinates an adapter with the kill-switch state
+machine. It arms `BlockNonTunnel` before every connection attempt and changes
+to `TunnelOnly` only after adapter success. It restores `BlockNonTunnel` before
+calling adapter teardown. Therefore failed setup, invalid session identifiers
+and failed teardown retain blocking. Disabling filtering while a tunnel is
+active is rejected; always-on controllers cannot be disabled.
+
+These components define and test the platform boundary. They do not yet create
+real `WireGuard` interfaces, configure routes, or install OS firewall rules.
+The Linux backend must apply this contract with least privilege and transaction-
+like cleanup, and must be tested in an isolated network namespace before M1 can
+claim a working VPN tunnel.
+
 Operational values must be finite and non-negative. `packet_loss_ratio` is in
 `[0, 1]`, `connection_success` is a single binary observation (`0` or `1`), and
 `reconnect_count` is an integer count. Latencies are milliseconds and may be
