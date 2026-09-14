@@ -21,24 +21,24 @@ const (
 // DeviceConfig contains public, short-lived connection parameters. Private
 // device and transport keys are never configuration-delivery fields.
 type DeviceConfig struct {
-	Version   uint64
-	DeviceID  string
-	NodeID    string
-	Transport string
-	Endpoint  netip.AddrPort
-	DNS       []netip.Addr
-	WireGuard WireGuardParameters
-	IssuedAt  time.Time
-	ExpiresAt time.Time
+	Version   uint64              `json:"version"`
+	DeviceID  string              `json:"device_id"`
+	NodeID    string              `json:"node_id"`
+	Transport string              `json:"transport"`
+	Endpoint  netip.AddrPort      `json:"endpoint"`
+	DNS       []netip.Addr        `json:"dns"`
+	WireGuard WireGuardParameters `json:"wireguard"`
+	IssuedAt  time.Time           `json:"issued_at"`
+	ExpiresAt time.Time           `json:"expires_at"`
 }
 
 // WireGuardParameters contains the public peer and interface fields required
 // to establish a tunnel. Device private keys never appear in this structure.
 type WireGuardParameters struct {
-	PeerPublicKey             []byte
-	TunnelAddresses           []netip.Prefix
-	MTU                       uint16
-	PersistentKeepaliveSecond uint16
+	PeerPublicKey             []byte         `json:"peer_public_key"`
+	TunnelAddresses           []netip.Prefix `json:"tunnel_addresses"`
+	MTU                       uint16         `json:"mtu"`
+	PersistentKeepaliveSecond uint16         `json:"persistent_keepalive_seconds"`
 }
 
 func (config DeviceConfig) Validate(now time.Time) error {

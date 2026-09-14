@@ -27,9 +27,9 @@ type Verifier interface {
 }
 
 type SignedConfig struct {
-	Config    DeviceConfig
-	KeyID     string
-	Signature []byte
+	Config    DeviceConfig `json:"config"`
+	KeyID     string       `json:"key_id"`
+	Signature []byte       `json:"signature"`
 }
 
 type Ed25519Signer struct {

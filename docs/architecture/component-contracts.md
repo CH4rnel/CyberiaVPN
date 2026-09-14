@@ -48,9 +48,11 @@ tampered, expired or wrong-device envelopes return `503` without connection
 parameters. Successful responses contain the complete `SignedConfig` envelope
 and use `Cache-Control: no-store`, as do errors.
 
-The JSON envelope uses `Config`, `KeyID` and `Signature`. `Config` contains
-`Version`, `DeviceID`, `NodeID`, `Transport`, `Endpoint`, `DNS`, `IssuedAt` and
-`ExpiresAt`. Signatures are base64; endpoints and DNS addresses are strings;
+The JSON envelope uses `config`, `key_id` and `signature`. `config` contains
+`version`, `device_id`, `node_id`, `transport`, `endpoint`, `dns`, `wireguard`,
+`issued_at` and `expires_at`. `wireguard` contains `peer_public_key`,
+`tunnel_addresses`, `mtu` and `persistent_keepalive_seconds`. Signatures and
+peer public keys are base64; endpoints, DNS addresses and tunnel prefixes are strings;
 timestamps use RFC 3339 with subsecond precision. Versions are unsigned 64-bit
 integers and must be decoded without floating-point precision loss. The signature
 covers the canonical binary configuration, not the JSON representation.
