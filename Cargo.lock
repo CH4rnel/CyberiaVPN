@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "cyberia-killswitch"
 version = "0.1.0"
+dependencies = [
+ "cyberia-transport",
+]
 
 [[package]]
 name = "cyberia-routing"
