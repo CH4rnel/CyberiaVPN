@@ -27,8 +27,18 @@ type DeviceConfig struct {
 	Transport string
 	Endpoint  netip.AddrPort
 	DNS       []netip.Addr
+	WireGuard WireGuardParameters
 	IssuedAt  time.Time
 	ExpiresAt time.Time
+}
+
+// WireGuardParameters contains the public peer and interface fields required
+// to establish a tunnel. Device private keys never appear in this structure.
+type WireGuardParameters struct {
+	PeerPublicKey             []byte
+	TunnelAddresses           []netip.Prefix
+	MTU                       uint16
+	PersistentKeepaliveSecond uint16
 }
 
 func (config DeviceConfig) Validate(now time.Time) error {
@@ -48,6 +58,9 @@ func (config DeviceConfig) Validate(now time.Time) error {
 	}
 	if len(config.DNS) == 0 {
 		return fmt.Errorf("%w: at least one DNS resolver is required", ErrInvalid)
+	}
+	if err := config.WireGuard.Validate(); err != nil {
+		return err
 	}
 	resolvers := make(map[netip.Addr]struct{}, len(config.DNS))
 	for _, resolver := range config.DNS {
@@ -72,6 +85,43 @@ func (config DeviceConfig) Validate(now time.Time) error {
 	}
 	if !config.ExpiresAt.After(now) {
 		return ErrExpired
+	}
+	return nil
+}
+
+func (parameters WireGuardParameters) Validate() error {
+	if len(parameters.PeerPublicKey) != 32 {
+		return fmt.Errorf("%w: WireGuard peer public key must be 32 bytes", ErrInvalid)
+	}
+	allZero := true
+	for _, byte := range parameters.PeerPublicKey {
+		if byte != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		return fmt.Errorf("%w: WireGuard peer public key is zero", ErrInvalid)
+	}
+	if len(parameters.TunnelAddresses) == 0 || len(parameters.TunnelAddresses) > 16 {
+		return fmt.Errorf("%w: WireGuard requires between 1 and 16 tunnel addresses", ErrInvalid)
+	}
+	addresses := make(map[netip.Addr]struct{}, len(parameters.TunnelAddresses))
+	for _, prefix := range parameters.TunnelAddresses {
+		address := prefix.Addr()
+		if !prefix.IsValid() || address.IsUnspecified() || address.IsMulticast() || address.Zone() != "" {
+			return fmt.Errorf("%w: invalid WireGuard tunnel address", ErrInvalid)
+		}
+		if _, exists := addresses[address]; exists {
+			return fmt.Errorf("%w: duplicate WireGuard tunnel address", ErrInvalid)
+		}
+		addresses[address] = struct{}{}
+	}
+	if parameters.MTU < 1280 || parameters.MTU > 9000 {
+		return fmt.Errorf("%w: WireGuard MTU is outside safe bounds", ErrInvalid)
+	}
+	if parameters.PersistentKeepaliveSecond > 300 {
+		return fmt.Errorf("%w: WireGuard keepalive is outside safe bounds", ErrInvalid)
 	}
 	return nil
 }

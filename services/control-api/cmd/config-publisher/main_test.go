@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -20,7 +21,7 @@ func TestPublishSealsAndStoresLatestConfiguration(t *testing.T) {
 	}
 	now := time.Unix(1800000000, 0)
 	private := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
-	config := configuration.DeviceConfig{Version: 1, DeviceID: "device", NodeID: "node", Transport: configuration.TransportWireGuard, Endpoint: netip.MustParseAddrPort("192.0.2.1:51820"), DNS: []netip.Addr{netip.MustParseAddr("192.0.2.53")}, IssuedAt: now, ExpiresAt: now.Add(time.Hour)}
+	config := configuration.DeviceConfig{Version: 1, DeviceID: "device", NodeID: "node", Transport: configuration.TransportWireGuard, Endpoint: netip.MustParseAddrPort("192.0.2.1:51820"), DNS: []netip.Addr{netip.MustParseAddr("192.0.2.53")}, WireGuard: configuration.WireGuardParameters{PeerPublicKey: bytes.Repeat([]byte{1}, 32), TunnelAddresses: []netip.Prefix{netip.MustParsePrefix("10.0.0.2/24")}, MTU: 1420, PersistentKeepaliveSecond: 25}, IssuedAt: now, ExpiresAt: now.Add(time.Hour)}
 	input, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)

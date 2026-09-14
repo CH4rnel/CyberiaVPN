@@ -121,6 +121,13 @@ func signingMessage(config DeviceConfig) []byte {
 	for _, resolver := range config.DNS {
 		message = appendField(message, []byte(resolver.String()))
 	}
+	message = appendField(message, config.WireGuard.PeerPublicKey)
+	message = binary.BigEndian.AppendUint32(message, uint32(len(config.WireGuard.TunnelAddresses)))
+	for _, address := range config.WireGuard.TunnelAddresses {
+		message = appendField(message, []byte(address.String()))
+	}
+	message = binary.BigEndian.AppendUint16(message, config.WireGuard.MTU)
+	message = binary.BigEndian.AppendUint16(message, config.WireGuard.PersistentKeepaliveSecond)
 	message = appendTime(message, config.IssuedAt)
 	message = appendTime(message, config.ExpiresAt)
 	return message
@@ -138,5 +145,7 @@ func appendField(destination, field []byte) []byte {
 
 func cloneConfig(config DeviceConfig) DeviceConfig {
 	config.DNS = append([]netip.Addr(nil), config.DNS...)
+	config.WireGuard.PeerPublicKey = bytes.Clone(config.WireGuard.PeerPublicKey)
+	config.WireGuard.TunnelAddresses = append([]netip.Prefix(nil), config.WireGuard.TunnelAddresses...)
 	return config
 }
