@@ -86,11 +86,24 @@ interface name. The adapter cannot report itself disconnected when backend
 teardown fails; callers must treat the tunnel as possibly live.
 
 `ConnectionController` coordinates an adapter with the kill-switch state
-machine. It arms `BlockNonTunnel` before every connection attempt and changes
-to `TunnelOnly` only after adapter success. It restores `BlockNonTunnel` before
-calling adapter teardown. Therefore failed setup, invalid session identifiers
-and failed teardown retain blocking. Disabling filtering while a tunnel is
-active is rejected; always-on controllers cannot be disabled.
+machine and requires an explicit firewall backend. It applies
+the initial policy during construction and refuses to create a controller when
+that policy cannot be enforced. It applies
+`BlockNonTunnel` before every connection attempt and changes to `TunnelOnly`
+only after adapter success. It restores `BlockNonTunnel` before calling adapter
+teardown. A firewall error prevents tunnel setup or teardown from creating an
+unfiltered interval. Failed setup, invalid session identifiers and failed
+teardown retain blocking. Disabling filtering while a tunnel is active is
+rejected; always-on controllers cannot be disabled.
+
+On Linux, `NftablesBackend` renders the complete `inet cyberia_vpn` table and
+passes it to an absolute, validated `nft` executable through standard input;
+no shell parses the rules. Updates use one nftables transaction and never flush
+tables owned by other applications. Blocking permits loopback, established
+flows and the configured UDP peer endpoint. Tunnel policy additionally permits
+output through the validated tunnel interface. Disabling empties the owned
+table. The endpoint must be resolved to an IP address before constructing the
+backend.
 
 The Linux backend invokes absolute `ip` and `wg` executables directly without a
 shell. It requires a private-key file with permissions no broader than `0600`,
@@ -101,10 +114,11 @@ interface with the requested name. Teardown deletes only the interface owned by
 the active backend instance.
 
 Executable and key paths are deployment inputs and must reside on an operator-
-controlled filesystem. The backend does not install routes, DNS policy, NAT or
-OS firewall rules, and it is not wired into a client executable yet. Before M1
-can claim a working VPN tunnel, the complete path must run with least privilege
-inside an isolated Linux network namespace and demonstrate cleanup on failure.
+controlled filesystem. The transport backend does not install routes, DNS
+policy or NAT, and neither Linux backend is wired into a client executable yet.
+Before M1 can claim a working VPN tunnel, the complete path must run with least
+privilege inside an isolated Linux network namespace and demonstrate cleanup on
+failure.
 
 Operational values must be finite and non-negative. `packet_loss_ratio` is in
 `[0, 1]`, `connection_success` is a single binary observation (`0` or `1`), and

@@ -44,7 +44,7 @@ Current component progress (not M1 completion):
 - [x] Shell-free Linux WireGuard interface setup with bounded partial-failure cleanup.
 - [x] Signed dual-stack WireGuard allowed-IP policy applied to Linux peers.
 - [ ] Managed WireGuard node and real transport adapter.
-- [ ] OS firewall implementation of the kill-switch contract.
+- [x] OS firewall implementation of the kill-switch contract.
 - [ ] End-to-end connect, disconnect and fail-safe integration tests.
 
 Exit criterion: a client can establish and safely tear down an authenticated

@@ -38,9 +38,10 @@ checked against a trusted device ID and the last accepted version. The developme
 server currently exposes only health and version endpoints.
 M1 now has a local authenticated enrollment-to-configuration path with durable
 state, a validated `WireGuard` adapter boundary and a fail-secure connection
-controller. A Linux backend can configure a WireGuard interface through validated
-absolute `ip` and `wg` executables. M1 still requires client wiring, route and DNS
-management, OS firewall integration and an end-to-end tunnel connection test.
+controller. Linux backends can configure a WireGuard interface and atomically
+apply output filtering through validated absolute `ip`, `wg` and `nft`
+executables. M1 still requires client wiring, route and DNS management, and a
+privileged end-to-end tunnel connection test.
 
 ## Local development
 

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::{error::Error, fmt, fs, io::Write};
 
-use crate::TrafficPolicy;
+use crate::{Firewall, FirewallError, TrafficPolicy};
 
 const TABLE_NAME: &str = "cyberia_vpn";
 
@@ -51,6 +51,12 @@ impl<R: NftablesRunner> NftablesBackend<R> {
     pub fn apply(&mut self, policy: &TrafficPolicy) -> Result<(), NftablesError> {
         let rules = self.config.render(policy)?;
         self.runner.apply(&rules)
+    }
+}
+
+impl<R: NftablesRunner> Firewall for NftablesBackend<R> {
+    fn apply(&mut self, policy: &TrafficPolicy) -> Result<(), FirewallError> {
+        Self::apply(self, policy).map_err(|error| FirewallError(error.to_string()))
     }
 }
 

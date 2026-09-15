@@ -112,19 +112,65 @@ impl Display for KillSwitchError {
 
 impl Error for KillSwitchError {}
 
-/// Coordinates a transport with the kill-switch state machine. It arms blocking
-/// before connect and restores it before every disconnect attempt.
-pub struct ConnectionController<T> {
-    kill_switch: KillSwitch,
-    transport: T,
+/// Platform boundary that makes one complete traffic policy effective.
+/// Implementations must apply changes atomically and leave the previous policy
+/// effective when an update fails.
+pub trait Firewall: Send {
+    /// Applies a complete policy at the operating-system boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an operational error when the policy cannot be made effective.
+    fn apply(&mut self, policy: &TrafficPolicy) -> Result<(), FirewallError>;
 }
 
-impl<T: Transport> ConnectionController<T> {
-    pub fn new(kill_switch: KillSwitch, transport: T) -> Self {
-        Self {
+/// Explicit in-memory backend for domain tests.
+#[derive(Debug, Default)]
+pub struct MemoryFirewall;
+
+impl Firewall for MemoryFirewall {
+    fn apply(&mut self, _: &TrafficPolicy) -> Result<(), FirewallError> {
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FirewallError(pub String);
+
+impl Display for FirewallError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "firewall policy failed: {}", self.0)
+    }
+}
+
+impl Error for FirewallError {}
+
+/// Coordinates a transport with the kill-switch state machine. It arms blocking
+/// before connect and restores it before every disconnect attempt.
+pub struct ConnectionController<T, F> {
+    kill_switch: KillSwitch,
+    transport: T,
+    firewall: F,
+}
+
+impl<T: Transport, F: Firewall> ConnectionController<T, F> {
+    /// Creates a controller only after applying its initial traffic policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns the firewall error instead of creating a controller whose
+    /// in-memory policy is not effective at the operating-system boundary.
+    pub fn new(
+        kill_switch: KillSwitch,
+        transport: T,
+        mut firewall: F,
+    ) -> Result<Self, FirewallError> {
+        firewall.apply(kill_switch.policy())?;
+        Ok(Self {
             kill_switch,
             transport,
-        }
+            firewall,
+        })
     }
 
     pub fn policy(&self) -> &TrafficPolicy {
@@ -146,16 +192,26 @@ impl<T: Transport> ConnectionController<T> {
         config: &TransportConfig,
         context: &ConnectContext,
     ) -> Result<Session, ConnectionError> {
-        self.kill_switch.enable();
+        let mut blocking = self.kill_switch.clone();
+        blocking.enable();
+        self.firewall
+            .apply(blocking.policy())
+            .map_err(ConnectionError::Firewall)?;
+        self.kill_switch = blocking;
         let session = self
             .transport
             .connect(config, context)
             .map_err(ConnectionError::Transport)?;
-        if let Err(error) = self.kill_switch.tunnel_established(&session.id) {
-            self.kill_switch.tunnel_lost();
+        let mut tunnel = self.kill_switch.clone();
+        if let Err(error) = tunnel.tunnel_established(&session.id) {
             let _ = self.transport.disconnect();
             return Err(ConnectionError::KillSwitch(error));
         }
+        if let Err(error) = self.firewall.apply(tunnel.policy()) {
+            let _ = self.transport.disconnect();
+            return Err(ConnectionError::Firewall(error));
+        }
+        self.kill_switch = tunnel;
         Ok(session)
     }
 
@@ -166,7 +222,12 @@ impl<T: Transport> ConnectionController<T> {
     /// Returns the transport error while retaining `BlockNonTunnel` if teardown
     /// fails, so traffic cannot bypass a possibly live tunnel.
     pub fn disconnect(&mut self) -> Result<(), ConnectionError> {
-        self.kill_switch.tunnel_lost();
+        let mut blocking = self.kill_switch.clone();
+        blocking.tunnel_lost();
+        self.firewall
+            .apply(blocking.policy())
+            .map_err(ConnectionError::Firewall)?;
+        self.kill_switch = blocking;
         self.transport
             .disconnect()
             .map_err(ConnectionError::Transport)
@@ -176,24 +237,32 @@ impl<T: Transport> ConnectionController<T> {
     ///
     /// # Errors
     ///
-    /// Returns `KillSwitchError::AlwaysOn` or `KillSwitchError::NotEnabled`
-    /// without changing an active tunnel policy.
-    pub fn disable(&mut self) -> Result<(), KillSwitchError> {
+    /// Returns a state-machine or firewall error without changing the effective
+    /// policy.
+    pub fn disable(&mut self) -> Result<(), ConnectionError> {
         if matches!(self.kill_switch.policy(), TrafficPolicy::TunnelOnly { .. }) {
-            return Err(KillSwitchError::NotEnabled);
+            return Err(ConnectionError::KillSwitch(KillSwitchError::NotEnabled));
         }
-        self.kill_switch.disable()
+        let mut disabled = self.kill_switch.clone();
+        disabled.disable().map_err(ConnectionError::KillSwitch)?;
+        self.firewall
+            .apply(disabled.policy())
+            .map_err(ConnectionError::Firewall)?;
+        self.kill_switch = disabled;
+        Ok(())
     }
 }
 
 #[derive(Debug)]
 pub enum ConnectionError {
+    Firewall(FirewallError),
     KillSwitch(KillSwitchError),
     Transport(TransportError),
 }
 impl Display for ConnectionError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Firewall(error) => error.fmt(formatter),
             Self::KillSwitch(error) => error.fmt(formatter),
             Self::Transport(error) => error.fmt(formatter),
         }
