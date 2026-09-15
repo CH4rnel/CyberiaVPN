@@ -2,7 +2,10 @@
 
 use std::net::IpAddr;
 use std::num::NonZeroU16;
-use std::{error::Error, fmt};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::{error::Error, fmt, fs, io::Write};
 
 use crate::TrafficPolicy;
 
@@ -15,6 +18,97 @@ const TABLE_NAME: &str = "cyberia_vpn";
 pub struct NftablesConfig {
     pub endpoint_address: IpAddr,
     pub endpoint_port: NonZeroU16,
+}
+
+/// Injectable nftables boundary used by the Linux policy backend.
+pub trait NftablesRunner: Send {
+    /// Applies one complete ruleset transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns a bounded operational error when nftables cannot accept the
+    /// transaction.
+    fn apply(&mut self, rules: &str) -> Result<(), NftablesError>;
+}
+
+/// Applies kill-switch policies with an injected nftables runner.
+pub struct NftablesBackend<R> {
+    config: NftablesConfig,
+    runner: R,
+}
+
+impl<R: NftablesRunner> NftablesBackend<R> {
+    pub fn new(config: NftablesConfig, runner: R) -> Self {
+        Self { config, runner }
+    }
+
+    /// Renders and atomically applies one policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error without running nftables when rendering fails, or the
+    /// runner error when the transaction cannot be applied.
+    pub fn apply(&mut self, policy: &TrafficPolicy) -> Result<(), NftablesError> {
+        let rules = self.config.render(policy)?;
+        self.runner.apply(&rules)
+    }
+}
+
+/// Shell-free process runner for the system `nft` executable.
+pub struct SystemNftablesRunner {
+    executable: PathBuf,
+}
+
+impl SystemNftablesRunner {
+    /// Creates a runner for an operator-controlled executable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NftablesError::InvalidExecutable`] unless the path is absolute
+    /// and names an executable regular file rather than a symbolic link.
+    pub fn new(executable: PathBuf) -> Result<Self, NftablesError> {
+        validate_executable(&executable)?;
+        Ok(Self { executable })
+    }
+}
+
+impl NftablesRunner for SystemNftablesRunner {
+    fn apply(&mut self, rules: &str) -> Result<(), NftablesError> {
+        let mut child = Command::new(&self.executable)
+            .args(["--file", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| NftablesError::Command(format!("failed to start nft: {error}")))?;
+        let write_result = child
+            .stdin
+            .take()
+            .ok_or_else(|| NftablesError::Command("nft stdin is unavailable".into()))?
+            .write_all(rules.as_bytes());
+        if let Err(error) = write_result {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(NftablesError::Command(format!(
+                "failed to write nft rules: {error}"
+            )));
+        }
+        let output = child
+            .wait_with_output()
+            .map_err(|error| NftablesError::Command(format!("failed to wait for nft: {error}")))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let reason: String = String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .take(256)
+            .collect();
+        Err(NftablesError::Command(format!(
+            "nft exited with {}: {}",
+            output.status,
+            reason.trim()
+        )))
+    }
 }
 
 impl NftablesConfig {
@@ -72,15 +166,33 @@ fn valid_interface(interface: &str) -> bool {
         })
 }
 
+fn validate_executable(path: &Path) -> Result<(), NftablesError> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| NftablesError::InvalidExecutable)?;
+    if !path.is_absolute()
+        || !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.permissions().mode() & 0o111 == 0
+    {
+        return Err(NftablesError::InvalidExecutable);
+    }
+    Ok(())
+}
+
 /// A policy cannot be represented safely as nftables input.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NftablesError {
     InvalidInterface,
+    InvalidExecutable,
+    Command(String),
 }
 
 impl fmt::Display for NftablesError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("invalid nftables tunnel interface")
+        match self {
+            Self::InvalidInterface => formatter.write_str("invalid nftables tunnel interface"),
+            Self::InvalidExecutable => formatter.write_str("invalid nftables executable"),
+            Self::Command(reason) => write!(formatter, "nftables command failed: {reason}"),
+        }
     }
 }
 

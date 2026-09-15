@@ -1,10 +1,31 @@
 #![cfg(target_os = "linux")]
 
+use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroU16;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use cyberia_killswitch::TrafficPolicy;
-use cyberia_killswitch::linux::NftablesConfig;
+use cyberia_killswitch::linux::{
+    NftablesBackend, NftablesConfig, NftablesError, NftablesRunner, SystemNftablesRunner,
+};
+
+struct Recorder {
+    inputs: Arc<Mutex<Vec<String>>>,
+    failure: Option<NftablesError>,
+}
+
+impl NftablesRunner for Recorder {
+    fn apply(&mut self, rules: &str) -> Result<(), NftablesError> {
+        self.inputs.lock().unwrap().push(rules.into());
+        match &self.failure {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    }
+}
 
 fn config(address: IpAddr) -> NftablesConfig {
     NftablesConfig {
@@ -57,4 +78,55 @@ fn rejects_an_unvalidated_interface_before_rendering() {
             })
             .is_err()
     );
+}
+
+#[test]
+fn backend_applies_one_complete_policy_transaction() {
+    let inputs = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = NftablesBackend::new(
+        config(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7))),
+        Recorder {
+            inputs: Arc::clone(&inputs),
+            failure: None,
+        },
+    );
+
+    backend.apply(&TrafficPolicy::BlockNonTunnel).unwrap();
+
+    let inputs = inputs.lock().unwrap();
+    assert_eq!(inputs.len(), 1);
+    assert!(inputs[0].contains("policy drop"));
+}
+
+#[test]
+fn backend_propagates_a_failed_transaction() {
+    let mut backend = NftablesBackend::new(
+        config(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        Recorder {
+            inputs: Arc::new(Mutex::new(Vec::new())),
+            failure: Some(NftablesError::Command("denied".into())),
+        },
+    );
+
+    assert_eq!(
+        backend.apply(&TrafficPolicy::BlockNonTunnel),
+        Err(NftablesError::Command("denied".into()))
+    );
+}
+
+#[test]
+fn system_runner_requires_an_absolute_regular_executable() {
+    assert!(matches!(
+        SystemNftablesRunner::new(PathBuf::from("nft")),
+        Err(NftablesError::InvalidExecutable)
+    ));
+
+    let directory = std::env::temp_dir().join(format!("cyberia-nft-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir(&directory).unwrap();
+    let executable = directory.join("nft");
+    fs::write(&executable, "").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(SystemNftablesRunner::new(executable).is_ok());
+    fs::remove_dir_all(directory).unwrap();
 }
