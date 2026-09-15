@@ -7,6 +7,9 @@ use std::fmt::{Display, Formatter};
 
 use cyberia_transport::{ConnectContext, Session, Transport, TransportConfig, TransportError};
 
+#[cfg(target_os = "linux")]
+pub mod linux;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrafficPolicy {
     Disabled,
