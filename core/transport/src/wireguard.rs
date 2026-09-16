@@ -159,7 +159,7 @@ pub trait WireGuardBackend: Send {
     /// Returns a transport error when the platform cannot remove the interface.
     fn bring_down(&mut self, interface: &str) -> Result<(), TransportError>;
 
-    fn health(&self) -> TransportHealth;
+    fn health(&mut self) -> TransportHealth;
 }
 
 /// A lifecycle adapter over a platform-specific `WireGuard` backend. It does not
@@ -237,7 +237,7 @@ impl<B: WireGuardBackend> Transport for WireGuardAdapter<B> {
         Ok(())
     }
 
-    fn health(&self) -> TransportHealth {
+    fn health(&mut self) -> TransportHealth {
         if !self.connected {
             return TransportHealth {
                 status: HealthStatus::Unavailable,

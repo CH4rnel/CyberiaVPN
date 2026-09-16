@@ -57,7 +57,7 @@ impl Transport for Fake {
         self.connected = false;
         Ok(())
     }
-    fn health(&self) -> TransportHealth {
+    fn health(&mut self) -> TransportHealth {
         TransportHealth {
             status: if self.connected {
                 HealthStatus::Healthy

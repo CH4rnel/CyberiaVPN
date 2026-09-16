@@ -6,11 +6,14 @@ use std::num::NonZeroU32;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     ConnectContext, HealthStatus, TransportError, TransportHealth, WireGuardBackend,
     WireGuardConfig,
 };
+
+const MAXIMUM_HANDSHAKE_AGE_SECONDS: u64 = 180;
 
 /// One command invocation represented as an executable plus literal arguments.
 /// No shell parses these values.
@@ -28,6 +31,17 @@ pub trait CommandRunner: Send {
     ///
     /// Returns a bounded network error for spawn failures or non-zero status.
     fn run(&mut self, command: &CommandSpec) -> Result<(), TransportError>;
+
+    /// Runs one command and returns its bounded standard output.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same execution errors as [`CommandRunner::run`]. Runners
+    /// that do not expose output may retain the default empty result.
+    fn output(&mut self, command: &CommandSpec) -> Result<Vec<u8>, TransportError> {
+        self.run(command)?;
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -35,6 +49,10 @@ pub struct SystemCommandRunner;
 
 impl CommandRunner for SystemCommandRunner {
     fn run(&mut self, command: &CommandSpec) -> Result<(), TransportError> {
+        self.output(command).map(drop)
+    }
+
+    fn output(&mut self, command: &CommandSpec) -> Result<Vec<u8>, TransportError> {
         let output = Command::new(&command.program)
             .args(&command.arguments)
             .output()
@@ -42,7 +60,12 @@ impl CommandRunner for SystemCommandRunner {
                 TransportError::Network(format!("platform command failed to start: {error}"))
             })?;
         if output.status.success() {
-            return Ok(());
+            if output.stdout.len() > 64 * 1024 {
+                return Err(TransportError::Network(
+                    "platform command output exceeds safe bounds".into(),
+                ));
+            }
+            return Ok(output.stdout);
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         let reason: String = stderr.chars().take(256).collect();
@@ -95,6 +118,7 @@ pub struct LinuxWireGuardBackend<R> {
     routing_mark: NonZeroU32,
     active_rules: Vec<PolicyRule>,
     active_interface: Option<String>,
+    health_failures: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -142,6 +166,7 @@ impl<R: CommandRunner> LinuxWireGuardBackend<R> {
             routing_mark,
             active_rules: Vec::new(),
             active_interface: None,
+            health_failures: 0,
         })
     }
 
@@ -396,17 +421,53 @@ impl<R: CommandRunner> WireGuardBackend for LinuxWireGuardBackend<R> {
         Ok(())
     }
 
-    fn health(&self) -> TransportHealth {
+    fn health(&mut self) -> TransportHealth {
+        let Some(interface) = self.active_interface.clone() else {
+            return TransportHealth {
+                status: HealthStatus::Unavailable,
+                round_trip_time: None,
+                consecutive_failures: self.health_failures,
+            };
+        };
+        let command = CommandSpec {
+            program: self.tools.wg.clone(),
+            arguments: vec!["show".into(), interface, "latest-handshakes".into()],
+        };
+        let Ok(output) = self.runner.output(&command) else {
+            self.health_failures = self.health_failures.saturating_add(1);
+            return TransportHealth {
+                status: HealthStatus::Unavailable,
+                round_trip_time: None,
+                consecutive_failures: self.health_failures,
+            };
+        };
+        self.health_failures = 0;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let fresh = latest_handshake(&output).is_some_and(|timestamp| {
+            timestamp <= now && now - timestamp <= MAXIMUM_HANDSHAKE_AGE_SECONDS
+        });
         TransportHealth {
-            status: if self.active_interface.is_some() {
+            status: if fresh {
                 HealthStatus::Healthy
             } else {
-                HealthStatus::Unavailable
+                HealthStatus::Degraded
             },
             round_trip_time: None,
             consecutive_failures: 0,
         }
     }
+}
+
+fn latest_handshake(output: &[u8]) -> Option<u64> {
+    std::str::from_utf8(output)
+        .ok()?
+        .lines()
+        .filter_map(|line| line.split_ascii_whitespace().nth(1)?.parse().ok())
+        .max()
+        .filter(|timestamp| *timestamp != 0)
 }
 
 fn validate_executable(path: &Path) -> Result<(), TransportError> {

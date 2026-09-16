@@ -8,6 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use cyberia_transport::linux::{CommandRunner, CommandSpec, LinuxTools, LinuxWireGuardBackend};
 use cyberia_transport::{
@@ -18,6 +19,28 @@ use cyberia_transport::{
 struct Recorder {
     commands: Arc<Mutex<Vec<CommandSpec>>>,
     fail_at: Option<usize>,
+}
+
+struct HealthRunner {
+    commands: Arc<Mutex<Vec<CommandSpec>>>,
+    output: Vec<u8>,
+    fail_query: bool,
+}
+
+impl CommandRunner for HealthRunner {
+    fn run(&mut self, command: &CommandSpec) -> Result<(), TransportError> {
+        self.commands.lock().unwrap().push(command.clone());
+        Ok(())
+    }
+
+    fn output(&mut self, command: &CommandSpec) -> Result<Vec<u8>, TransportError> {
+        self.commands.lock().unwrap().push(command.clone());
+        if self.fail_query {
+            Err(TransportError::Network("health query failed".into()))
+        } else {
+            Ok(self.output.clone())
+        }
+    }
 }
 impl CommandRunner for Recorder {
     fn run(&mut self, command: &CommandSpec) -> Result<(), TransportError> {
@@ -217,5 +240,76 @@ fn route_failure_removes_installed_rules_before_interface_cleanup() {
         commands.last().unwrap().arguments,
         ["link", "delete", "dev", "wg0"]
     );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn reports_health_from_the_latest_wireguard_handshake() {
+    let (tools, directory) = tools("handshake");
+    let commands = Arc::new(Mutex::new(vec![]));
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let runner = HealthRunner {
+        commands: Arc::clone(&commands),
+        output: format!("peer-key\t{now}\n").into_bytes(),
+        fail_query: false,
+    };
+    let mut backend =
+        LinuxWireGuardBackend::new(tools, runner, NonZeroU32::new(51_820).unwrap()).unwrap();
+    backend.bring_up("wg0", &profile(), &context()).unwrap();
+
+    assert_eq!(
+        backend.health().status,
+        cyberia_transport::HealthStatus::Healthy
+    );
+    assert_eq!(
+        commands.lock().unwrap().last().unwrap().arguments,
+        ["show", "wg0", "latest-handshakes"]
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn degrades_missing_or_stale_wireguard_handshakes() {
+    for (name, output) in [
+        ("missing", b"peer-key\t0\n".to_vec()),
+        ("stale", b"peer-key\t1\n".to_vec()),
+    ] {
+        let (tools, directory) = tools(name);
+        let runner = HealthRunner {
+            commands: Arc::new(Mutex::new(vec![])),
+            output,
+            fail_query: false,
+        };
+        let mut backend =
+            LinuxWireGuardBackend::new(tools, runner, NonZeroU32::new(51_820).unwrap()).unwrap();
+        backend.bring_up("wg0", &profile(), &context()).unwrap();
+
+        assert_eq!(
+            backend.health().status,
+            cyberia_transport::HealthStatus::Degraded
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn counts_consecutive_handshake_query_failures() {
+    let (tools, directory) = tools("health-failure");
+    let runner = HealthRunner {
+        commands: Arc::new(Mutex::new(vec![])),
+        output: Vec::new(),
+        fail_query: true,
+    };
+    let mut backend =
+        LinuxWireGuardBackend::new(tools, runner, NonZeroU32::new(51_820).unwrap()).unwrap();
+    backend.bring_up("wg0", &profile(), &context()).unwrap();
+
+    assert_eq!(backend.health().consecutive_failures, 1);
+    let health = backend.health();
+    assert_eq!(health.status, cyberia_transport::HealthStatus::Unavailable);
+    assert_eq!(health.consecutive_failures, 2);
     fs::remove_dir_all(directory).unwrap();
 }

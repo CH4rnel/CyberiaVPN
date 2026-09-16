@@ -32,7 +32,7 @@ impl WireGuardBackend for Backend {
             Ok(())
         }
     }
-    fn health(&self) -> TransportHealth {
+    fn health(&mut self) -> TransportHealth {
         TransportHealth {
             status: HealthStatus::Healthy,
             round_trip_time: Some(Duration::from_millis(3)),

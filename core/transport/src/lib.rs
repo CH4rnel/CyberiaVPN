@@ -150,7 +150,7 @@ pub trait Transport: Send {
     /// Returns a typed lifecycle or network error when teardown is incomplete.
     fn disconnect(&mut self) -> Result<(), TransportError>;
 
-    fn health(&self) -> TransportHealth;
+    fn health(&mut self) -> TransportHealth;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
