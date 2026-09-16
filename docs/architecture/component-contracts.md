@@ -108,14 +108,31 @@ backend.
 The Linux backend invokes absolute `ip` and `wg` executables directly without a
 shell. It requires a private-key file with permissions no broader than `0600`,
 creates the interface, applies the peer and endpoint, assigns tunnel addresses,
-sets MTU and brings the link up. A failure after interface creation triggers one
-bounded delete attempt. A failure to create the link does not delete an existing
-interface with the requested name. Teardown deletes only the interface owned by
-the active backend instance.
+sets MTU and brings the link up. Non-default allowed prefixes are installed in
+the main routing table. A default prefix uses an explicit routing table and
+matching WireGuard firewall mark so the encrypted peer traffic remains on the
+underlying network. Policy rules are removed in reverse order before interface
+teardown. A failure after interface creation triggers bounded cleanup of applied
+rules and the interface. A failure to create the link does not delete an
+existing interface with the requested name. Teardown deletes only resources
+owned by the active backend instance.
+
+Backend health queries `wg show <interface> latest-handshakes`. A handshake no
+older than 180 seconds is healthy. Missing, zero, future or stale timestamps are
+degraded. A failed query is unavailable and increments a saturating consecutive
+failure counter. Command output accepted by the system runner is limited to
+64 KiB.
+
+`LinuxWireGuardConnection` is the managed client boundary. It derives the
+firewall exception from the same concrete IP endpoint used by the adapter,
+constructs the WireGuard, routing and nftables backends, owns the transport
+timeout, and exposes connect, health, disconnect and disable operations. A
+hostname endpoint is rejected before platform state changes because firewall
+rules must not depend on name resolution during a lifecycle transition.
 
 Executable and key paths are deployment inputs and must reside on an operator-
-controlled filesystem. The transport backend does not install routes, DNS
-policy or NAT, and neither Linux backend is wired into a client executable yet.
+controlled filesystem. The transport backend does not install DNS policy or
+NAT, and the managed connection is not wired into a client executable yet.
 Before M1 can claim a working VPN tunnel, the complete path must run with least
 privilege inside an isolated Linux network namespace and demonstrate cleanup on
 failure.

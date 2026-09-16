@@ -40,8 +40,10 @@ M1 now has a local authenticated enrollment-to-configuration path with durable
 state, a validated `WireGuard` adapter boundary and a fail-secure connection
 controller. Linux backends can configure a WireGuard interface and atomically
 apply output filtering through validated absolute `ip`, `wg` and `nft`
-executables. M1 still requires client wiring, route and DNS management, and a
-privileged end-to-end tunnel connection test.
+executables. The managed Linux connection composes firewall, WireGuard policy
+routing, recent-handshake health and fail-secure teardown behind one lifecycle.
+M1 still requires client executable integration, DNS management, a managed node
+and a privileged end-to-end tunnel connection test.
 
 ## Local development
 

@@ -9,6 +9,8 @@ use cyberia_transport::{ConnectContext, Session, Transport, TransportConfig, Tra
 
 #[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(target_os = "linux")]
+pub mod linux_connection;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrafficPolicy {
@@ -179,6 +181,10 @@ impl<T: Transport, F: Firewall> ConnectionController<T, F> {
 
     pub fn transport(&self) -> &T {
         &self.transport
+    }
+
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
     }
 
     /// Connects after arming non-tunnel blocking.
