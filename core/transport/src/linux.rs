@@ -1,6 +1,8 @@
 //! Linux process boundary used by platform transport backends.
 
 use std::fs;
+use std::net::IpAddr;
+use std::num::NonZeroU32;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -90,7 +92,30 @@ impl LinuxTools {
 pub struct LinuxWireGuardBackend<R> {
     tools: LinuxTools,
     runner: R,
+    routing_mark: NonZeroU32,
+    active_rules: Vec<PolicyRule>,
     active_interface: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AddressFamily {
+    V4,
+    V6,
+}
+
+impl AddressFamily {
+    fn argument(self) -> &'static str {
+        match self {
+            Self::V4 => "-4",
+            Self::V6 => "-6",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PolicyRule {
+    NotFirewallMark(AddressFamily),
+    SuppressDefault(AddressFamily),
 }
 
 impl<R: CommandRunner> LinuxWireGuardBackend<R> {
@@ -100,7 +125,11 @@ impl<R: CommandRunner> LinuxWireGuardBackend<R> {
     ///
     /// Returns invalid configuration when tool paths or the private-key path
     /// cannot be safely passed as literal command arguments.
-    pub fn new(tools: LinuxTools, runner: R) -> Result<Self, TransportError> {
+    pub fn new(
+        tools: LinuxTools,
+        runner: R,
+        routing_mark: NonZeroU32,
+    ) -> Result<Self, TransportError> {
         tools.validate()?;
         if tools.private_key.to_str().is_none() {
             return Err(TransportError::InvalidConfig(
@@ -110,6 +139,8 @@ impl<R: CommandRunner> LinuxWireGuardBackend<R> {
         Ok(Self {
             tools,
             runner,
+            routing_mark,
+            active_rules: Vec::new(),
             active_interface: None,
         })
     }
@@ -141,6 +172,8 @@ impl<R: CommandRunner> LinuxWireGuardBackend<R> {
             interface.into(),
             "private-key".into(),
             self.tools.private_key.to_string_lossy().into_owned(),
+            "fwmark".into(),
+            self.routing_mark.to_string(),
             "peer".into(),
             encode_key(&profile.peer_public_key),
             "endpoint".into(),
@@ -185,6 +218,134 @@ impl<R: CommandRunner> LinuxWireGuardBackend<R> {
             ],
         )
     }
+
+    fn install_routes(
+        &mut self,
+        interface: &str,
+        profile: &WireGuardConfig,
+        context: &ConnectContext,
+        rules: &mut Vec<PolicyRule>,
+    ) -> Result<(), TransportError> {
+        for allowed_ip in &profile.allowed_ips {
+            context.check()?;
+            let family = match allowed_ip.network {
+                IpAddr::V4(_) => AddressFamily::V4,
+                IpAddr::V6(_) => AddressFamily::V6,
+            };
+            let prefix = format!("{}/{}", allowed_ip.network, allowed_ip.prefix_length);
+            if allowed_ip.prefix_length != 0 {
+                self.command(
+                    self.tools.ip.clone(),
+                    vec![
+                        family.argument().into(),
+                        "route".into(),
+                        "replace".into(),
+                        prefix,
+                        "dev".into(),
+                        interface.into(),
+                    ],
+                )?;
+                continue;
+            }
+
+            let mark = self.routing_mark.to_string();
+            self.command(
+                self.tools.ip.clone(),
+                vec![
+                    family.argument().into(),
+                    "route".into(),
+                    "replace".into(),
+                    "default".into(),
+                    "dev".into(),
+                    interface.into(),
+                    "table".into(),
+                    mark.clone(),
+                ],
+            )?;
+            self.command(
+                self.tools.ip.clone(),
+                vec![
+                    family.argument().into(),
+                    "rule".into(),
+                    "add".into(),
+                    "not".into(),
+                    "fwmark".into(),
+                    mark.clone(),
+                    "table".into(),
+                    mark,
+                ],
+            )?;
+            rules.push(PolicyRule::NotFirewallMark(family));
+            self.command(
+                self.tools.ip.clone(),
+                vec![
+                    family.argument().into(),
+                    "rule".into(),
+                    "add".into(),
+                    "table".into(),
+                    "main".into(),
+                    "suppress_prefixlength".into(),
+                    "0".into(),
+                ],
+            )?;
+            rules.push(PolicyRule::SuppressDefault(family));
+        }
+        Ok(())
+    }
+
+    fn remove_policy_rule(&mut self, rule: PolicyRule) -> Result<(), TransportError> {
+        let (family, mut arguments) = match rule {
+            PolicyRule::NotFirewallMark(family) => (
+                family,
+                vec![
+                    "rule".into(),
+                    "delete".into(),
+                    "not".into(),
+                    "fwmark".into(),
+                    self.routing_mark.to_string(),
+                    "table".into(),
+                    self.routing_mark.to_string(),
+                ],
+            ),
+            PolicyRule::SuppressDefault(family) => (
+                family,
+                vec![
+                    "rule".into(),
+                    "delete".into(),
+                    "table".into(),
+                    "main".into(),
+                    "suppress_prefixlength".into(),
+                    "0".into(),
+                ],
+            ),
+        };
+        arguments.insert(0, family.argument().into());
+        self.command(self.tools.ip.clone(), arguments)
+    }
+
+    fn remove_policy_rules(&mut self, rules: &mut Vec<PolicyRule>) -> Result<(), TransportError> {
+        while let Some(rule) = rules.last().copied() {
+            self.remove_policy_rule(rule)?;
+            rules.pop();
+        }
+        Ok(())
+    }
+
+    fn rollback_setup(
+        &mut self,
+        interface: &str,
+        rules: &mut Vec<PolicyRule>,
+        setup_error: TransportError,
+    ) -> TransportError {
+        let rules_result = self.remove_policy_rules(rules);
+        let interface_result = self.delete_interface(interface);
+        match (rules_result, interface_result) {
+            (Ok(()), Ok(())) => setup_error,
+            (rules, interface) => TransportError::Network(format!(
+                "WireGuard setup failed: {setup_error}; cleanup failed: rules={rules:?}, interface={interface:?}"
+            )),
+        }
+    }
 }
 
 impl<R: CommandRunner> WireGuardBackend for LinuxWireGuardBackend<R> {
@@ -209,14 +370,14 @@ impl<R: CommandRunner> WireGuardBackend for LinuxWireGuardBackend<R> {
                 "wireguard".into(),
             ],
         )?;
+        let mut rules = Vec::new();
         if let Err(setup_error) = self.configure(interface, profile, context) {
-            if let Err(cleanup_error) = self.delete_interface(interface) {
-                return Err(TransportError::Network(format!(
-                    "WireGuard setup failed: {setup_error}; cleanup failed: {cleanup_error}"
-                )));
-            }
-            return Err(setup_error);
+            return Err(self.rollback_setup(interface, &mut rules, setup_error));
         }
+        if let Err(setup_error) = self.install_routes(interface, profile, context, &mut rules) {
+            return Err(self.rollback_setup(interface, &mut rules, setup_error));
+        }
+        self.active_rules = rules;
         self.active_interface = Some(interface.into());
         Ok(())
     }
@@ -224,6 +385,11 @@ impl<R: CommandRunner> WireGuardBackend for LinuxWireGuardBackend<R> {
     fn bring_down(&mut self, interface: &str) -> Result<(), TransportError> {
         if self.active_interface.as_deref() != Some(interface) {
             return Err(TransportError::NotConnected);
+        }
+        let mut rules = std::mem::take(&mut self.active_rules);
+        if let Err(error) = self.remove_policy_rules(&mut rules) {
+            self.active_rules = rules;
+            return Err(error);
         }
         self.delete_interface(interface)?;
         self.active_interface = None;
