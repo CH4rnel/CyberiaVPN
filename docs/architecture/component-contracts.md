@@ -157,8 +157,12 @@ platform state changes because firewall rules must not depend on name resolution
 during a lifecycle transition.
 
 Executable and key paths are deployment inputs and must reside on an operator-
-controlled filesystem. The managed connection is not wired into a client
-executable yet.
+controlled filesystem. `cyberia-linux-client` accepts exactly one absolute
+private JSON configuration path, builds the managed connection and remains
+attached until SIGINT or SIGTERM. Non-always-on sessions remove filtering only
+after protected teardown; always-on sessions retain blocking on exit or failed
+connection. The example configuration contains documentation-only addresses and
+keys and must not be deployed unchanged.
 Before M1 can claim a working VPN tunnel, the complete path must run with least
 privilege inside an isolated Linux network namespace and demonstrate cleanup on
 failure.

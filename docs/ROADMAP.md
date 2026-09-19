@@ -48,6 +48,7 @@ Current component progress (not M1 completion):
 - [x] OS firewall implementation of the kill-switch contract.
 - [x] Composed Linux client lifecycle for firewall, tunnel, routes and health.
 - [x] Bounded per-interface Linux DNS setup and fail-secure rollback.
+- [x] Managed Linux client executable with signal-driven teardown.
 - [ ] End-to-end connect, disconnect and fail-safe integration tests.
 
 Exit criterion: a client can establish and safely tear down an authenticated

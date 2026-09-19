@@ -4,17 +4,23 @@
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::fs;
+use std::fs::OpenOptions;
+use std::io::Read;
 use std::net::IpAddr;
 use std::num::{NonZeroU16, NonZeroU32};
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use cyberia_killswitch::linux_connection::LinuxConnectionSettings;
-use cyberia_transport::linux::{LinuxDnsTools, LinuxTools};
-use cyberia_transport::{AllowedIp, DnsConfig, Endpoint, TunnelAddress, WireGuardConfig};
+use cyberia_killswitch::ConnectionError;
+use cyberia_killswitch::linux::NftablesRunner;
+use cyberia_killswitch::linux_connection::{LinuxConnectionSettings, LinuxWireGuardConnection};
+use cyberia_transport::linux::{CommandRunner, LinuxDnsTools, LinuxTools};
+use cyberia_transport::{
+    AllowedIp, CancellationToken, DnsConfig, Endpoint, Session, TunnelAddress, WireGuardConfig,
+};
 
 const MAXIMUM_CONFIG_SIZE: u64 = 1024 * 1024;
 
@@ -58,17 +64,33 @@ pub fn load_config(path: &Path) -> Result<ClientConfig, ConfigError> {
     if !path.is_absolute() {
         return Err(ConfigError::UnsafeFile);
     }
-    let metadata = fs::symlink_metadata(path).map_err(ConfigError::Io)?;
-    if !metadata.file_type().is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.permissions().mode() & 0o077 != 0
-    {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|error| {
+            if error.raw_os_error() == Some(libc::ELOOP) {
+                ConfigError::UnsafeFile
+            } else {
+                ConfigError::Io(error)
+            }
+        })?;
+    let metadata = file.metadata().map_err(ConfigError::Io)?;
+    if !metadata.file_type().is_file() || metadata.permissions().mode() & 0o077 != 0 {
         return Err(ConfigError::UnsafeFile);
     }
     if metadata.len() > MAXIMUM_CONFIG_SIZE {
         return Err(ConfigError::Oversized);
     }
-    let bytes = fs::read(path).map_err(ConfigError::Io)?;
+    let capacity = usize::try_from(metadata.len()).map_err(|_| ConfigError::Oversized)?;
+    let mut bytes = Vec::with_capacity(capacity);
+    file.by_ref()
+        .take(MAXIMUM_CONFIG_SIZE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(ConfigError::Io)?;
+    if bytes.len() as u64 > MAXIMUM_CONFIG_SIZE {
+        return Err(ConfigError::Oversized);
+    }
     let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
     let config = ClientConfig::deserialize(&mut deserializer).map_err(ConfigError::Json)?;
     deserializer.end().map_err(ConfigError::Json)?;
@@ -137,6 +159,72 @@ impl ClientConfig {
             always_on: self.always_on,
         })
     }
+}
+
+/// Narrow lifecycle used by the executable and deterministic tests.
+pub trait ManagedClientConnection {
+    /// Establishes the tunnel with cooperative cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the managed lifecycle error while retaining fail-secure state.
+    fn connect(&mut self, cancellation: CancellationToken) -> Result<Session, ConnectionError>;
+
+    /// Restores blocking and tears down the tunnel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when protected teardown cannot complete.
+    fn disconnect(&mut self) -> Result<(), ConnectionError>;
+
+    /// Disables filtering after teardown for non-always-on clients.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the effective firewall policy cannot be updated.
+    fn disable(&mut self) -> Result<(), ConnectionError>;
+}
+
+impl<C: CommandRunner, D: CommandRunner, N: NftablesRunner> ManagedClientConnection
+    for LinuxWireGuardConnection<C, D, N>
+{
+    fn connect(&mut self, cancellation: CancellationToken) -> Result<Session, ConnectionError> {
+        self.connect(cancellation)
+    }
+
+    fn disconnect(&mut self) -> Result<(), ConnectionError> {
+        self.disconnect()
+    }
+
+    fn disable(&mut self) -> Result<(), ConnectionError> {
+        self.disable()
+    }
+}
+
+/// Connects, waits for a shutdown signal and tears down in fail-secure order.
+///
+/// # Errors
+///
+/// Returns the first connection or teardown error. A failed connection attempts
+/// to release filtering only when always-on mode is disabled.
+pub fn run_until_shutdown<C: ManagedClientConnection>(
+    connection: &mut C,
+    always_on: bool,
+    cancellation: CancellationToken,
+    wait_for_shutdown: impl FnOnce(),
+) -> Result<(), ConnectionError> {
+    if let Err(error) = connection.connect(cancellation) {
+        if !always_on {
+            let _ = connection.disable();
+        }
+        return Err(error);
+    }
+    wait_for_shutdown();
+    connection.disconnect()?;
+    if !always_on {
+        connection.disable()?;
+    }
+    Ok(())
 }
 
 fn decode_key(value: &str) -> Result<[u8; 32], ConfigError> {

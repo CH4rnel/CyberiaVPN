@@ -6,8 +6,8 @@ and combines a multi-protocol transport engine, deterministic routing, managed
 nodes, private DNS and defensive security controls.
 
 The project has an architecture baseline and is building **M1 foundations**.
-The current code is not a production-ready VPN service and cannot yet establish
-a VPN tunnel.
+The current code is not a production-ready VPN service and has not yet proved a
+complete tunnel in a privileged end-to-end environment.
 
 ## Engineering principles
 
@@ -43,8 +43,9 @@ apply output filtering through validated absolute `ip`, `wg` and `nft`
 executables. The managed Linux connection composes firewall, WireGuard policy
 routing, per-interface DNS, recent-handshake health and fail-secure teardown
 behind one lifecycle. Managed nodes compose their WireGuard interface with a
-default-deny nftables forwarding and NAT policy. M1 still requires client
-executable integration and a privileged end-to-end tunnel connection test.
+default-deny nftables forwarding and NAT policy. A Linux client executable now
+loads a private local configuration and owns connect, signal handling and
+fail-secure teardown. M1 still requires a privileged end-to-end tunnel test.
 
 ## Local development
 
@@ -52,6 +53,16 @@ Run all formatting, lint and test checks:
 
 ```sh
 make check
+```
+
+Build and run the Linux client with a private configuration derived from the
+documented example. The process requires the network capabilities needed by
+`ip`, `wg`, `nft` and `resolvectl` and remains attached until SIGINT or SIGTERM:
+
+```sh
+cp docs/examples/linux-client.json /absolute/private/client.json
+chmod 600 /absolute/private/client.json
+cargo run -p cyberia-linux-client -- /absolute/private/client.json
 ```
 
 Start the development API in another terminal:
