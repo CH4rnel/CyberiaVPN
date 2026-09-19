@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "apps/linux-client",
     "core/killswitch",
     "core/routing",
     "core/transport",
