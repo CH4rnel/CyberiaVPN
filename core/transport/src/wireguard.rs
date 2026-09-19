@@ -45,6 +45,50 @@ pub struct WireGuardNodeConfig {
     pub mtu: u16,
 }
 
+/// Restricted routed networks exposed by a managed `WireGuard` node.
+/// The Linux backend applies forwarding and source NAT for these prefixes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WireGuardNodeGatewayPolicy {
+    pub client_networks: Vec<AllowedIp>,
+}
+
+impl WireGuardNodeGatewayPolicy {
+    /// Validates a bounded, non-overlapping set of client subnets.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::InvalidConfig`] for missing, default, host,
+    /// non-canonical, duplicate or overlapping networks.
+    pub fn validate(&self) -> Result<(), TransportError> {
+        if self.client_networks.is_empty() || self.client_networks.len() > 16 {
+            return Err(TransportError::InvalidConfig(
+                "WireGuard node gateway requires between 1 and 16 client networks",
+            ));
+        }
+        for (index, network) in self.client_networks.iter().enumerate() {
+            let maximum_prefix = if network.network.is_ipv4() { 32 } else { 128 };
+            if network.prefix_length == 0
+                || network.prefix_length == maximum_prefix
+                || network.network.is_unspecified()
+                || !valid_network(*network)
+            {
+                return Err(TransportError::InvalidConfig(
+                    "invalid WireGuard node gateway client network",
+                ));
+            }
+            if self.client_networks[..index]
+                .iter()
+                .any(|other| networks_overlap(*other, *network))
+            {
+                return Err(TransportError::InvalidConfig(
+                    "overlapping WireGuard node gateway client networks",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl WireGuardNodeConfig {
     /// Validates bounded node interface parameters.
     ///
@@ -225,6 +269,22 @@ fn valid_network(allowed_ip: AllowedIp) -> bool {
             };
             bits & mask == bits
         }
+    }
+}
+
+fn networks_overlap(left: AllowedIp, right: AllowedIp) -> bool {
+    match (left.network, right.network) {
+        (IpAddr::V4(left_address), IpAddr::V4(right_address)) => {
+            let prefix = left.prefix_length.min(right.prefix_length);
+            let mask = u32::MAX << (32 - prefix);
+            u32::from(left_address) & mask == u32::from(right_address) & mask
+        }
+        (IpAddr::V6(left_address), IpAddr::V6(right_address)) => {
+            let prefix = left.prefix_length.min(right.prefix_length);
+            let mask = u128::MAX << (128 - prefix);
+            u128::from(left_address) & mask == u128::from(right_address) & mask
+        }
+        _ => false,
     }
 }
 

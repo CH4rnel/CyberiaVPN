@@ -18,7 +18,7 @@ pub mod linux;
 
 pub use wireguard::{
     AllowedIp, TunnelAddress, WireGuardAdapter, WireGuardBackend, WireGuardConfig,
-    WireGuardNodeConfig, WireGuardNodeHealth, WireGuardNodePeer,
+    WireGuardNodeConfig, WireGuardNodeGatewayPolicy, WireGuardNodeHealth, WireGuardNodePeer,
 };
 
 /// A protocol implemented by a transport adapter.
