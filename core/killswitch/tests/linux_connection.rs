@@ -13,9 +13,9 @@ use cyberia_killswitch::linux::{NftablesError, NftablesRunner};
 use cyberia_killswitch::linux_connection::{
     LinuxConnectionBuildError, LinuxConnectionSettings, LinuxWireGuardConnection,
 };
-use cyberia_transport::linux::{CommandRunner, CommandSpec, LinuxTools};
+use cyberia_transport::linux::{CommandRunner, CommandSpec, LinuxDnsTools, LinuxTools};
 use cyberia_transport::{
-    AllowedIp, CancellationToken, Endpoint, HealthStatus, TransportError, TunnelAddress,
+    AllowedIp, CancellationToken, DnsConfig, Endpoint, HealthStatus, TransportError, TunnelAddress,
     WireGuardConfig,
 };
 
@@ -43,6 +43,22 @@ struct FirewallRules {
     recorded: Arc<Mutex<Vec<String>>>,
 }
 
+struct FailingDns {
+    commands: Arc<Mutex<Vec<CommandSpec>>>,
+    fail_at: usize,
+}
+
+impl CommandRunner for FailingDns {
+    fn run(&mut self, command: &CommandSpec) -> Result<(), TransportError> {
+        let mut commands = self.commands.lock().unwrap();
+        commands.push(command.clone());
+        if commands.len() == self.fail_at {
+            return Err(TransportError::Network("DNS failure".into()));
+        }
+        Ok(())
+    }
+}
+
 impl NftablesRunner for FirewallRules {
     fn apply(&mut self, rules: &str) -> Result<(), NftablesError> {
         self.recorded.lock().unwrap().push(rules.into());
@@ -58,12 +74,15 @@ fn settings(name: &str, host: &str) -> (LinuxConnectionSettings, PathBuf) {
     let ip = directory.join("ip");
     let wg = directory.join("wg");
     let key = directory.join("key");
+    let resolvectl = directory.join("resolvectl");
     fs::write(&ip, "").unwrap();
     fs::write(&wg, "").unwrap();
     fs::write(&key, "private").unwrap();
+    fs::write(&resolvectl, "").unwrap();
     fs::set_permissions(&ip, fs::Permissions::from_mode(0o700)).unwrap();
     fs::set_permissions(&wg, fs::Permissions::from_mode(0o700)).unwrap();
     fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(&resolvectl, fs::Permissions::from_mode(0o700)).unwrap();
     (
         LinuxConnectionSettings {
             interface: "wg0".into(),
@@ -84,11 +103,15 @@ fn settings(name: &str, host: &str) -> (LinuxConnectionSettings, PathBuf) {
                 persistent_keepalive_seconds: Some(25),
                 mtu: 1420,
             },
+            dns: DnsConfig {
+                resolvers: vec!["192.0.2.53".parse().unwrap()],
+            },
             tools: LinuxTools {
                 ip,
                 wg,
                 private_key: key,
             },
+            dns_tools: LinuxDnsTools { resolvectl },
             routing_mark: NonZeroU32::new(51_820).unwrap(),
             connect_timeout: Duration::from_secs(1),
             always_on: false,
@@ -104,6 +127,9 @@ fn composes_firewall_transport_routes_health_and_teardown() {
     let rules = Arc::new(Mutex::new(Vec::new()));
     let mut connection = LinuxWireGuardConnection::with_runners(
         settings,
+        Commands {
+            recorded: Arc::clone(&commands),
+        },
         Commands {
             recorded: Arc::clone(&commands),
         },
@@ -138,6 +164,16 @@ fn composes_firewall_transport_routes_health_and_teardown() {
             .iter()
             .any(|command| { command.arguments == ["show", "wg0", "latest-handshakes"] })
     );
+    assert!(
+        commands
+            .iter()
+            .any(|command| { command.arguments == ["dns", "wg0", "192.0.2.53"] })
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|command| { command.arguments == ["revert", "wg0"] })
+    );
     assert_eq!(
         commands.last().unwrap().arguments,
         ["link", "delete", "dev", "wg0"]
@@ -153,6 +189,9 @@ fn rejects_a_hostname_before_applying_any_platform_state() {
 
     let result = LinuxWireGuardConnection::with_runners(
         settings,
+        Commands {
+            recorded: Arc::clone(&commands),
+        },
         Commands {
             recorded: Arc::clone(&commands),
         },
@@ -182,6 +221,9 @@ fn rejects_a_zero_timeout_before_applying_any_platform_state() {
         Commands {
             recorded: Arc::clone(&commands),
         },
+        Commands {
+            recorded: Arc::clone(&commands),
+        },
         FirewallRules {
             recorded: Arc::clone(&rules),
         },
@@ -195,5 +237,48 @@ fn rejects_a_zero_timeout_before_applying_any_platform_state() {
     ));
     assert!(commands.lock().unwrap().is_empty());
     assert!(rules.lock().unwrap().is_empty());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn dns_failure_restores_blocking_and_tears_down_the_tunnel() {
+    let (settings, directory) = settings("dns-failure", "198.51.100.7");
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let dns_commands = Arc::new(Mutex::new(Vec::new()));
+    let rules = Arc::new(Mutex::new(Vec::new()));
+    let mut connection = LinuxWireGuardConnection::with_runners(
+        settings,
+        Commands {
+            recorded: Arc::clone(&commands),
+        },
+        FailingDns {
+            commands: Arc::clone(&dns_commands),
+            fail_at: 2,
+        },
+        FirewallRules {
+            recorded: Arc::clone(&rules),
+        },
+    )
+    .unwrap();
+
+    assert!(connection.connect(CancellationToken::default()).is_err());
+
+    assert_eq!(connection.policy(), &TrafficPolicy::BlockNonTunnel);
+    assert_eq!(
+        dns_commands.lock().unwrap().last().unwrap().arguments,
+        ["revert", "wg0"]
+    );
+    assert_eq!(
+        commands.lock().unwrap().last().unwrap().arguments,
+        ["link", "delete", "dev", "wg0"]
+    );
+    assert!(
+        rules
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .contains("policy drop")
+    );
     fs::remove_dir_all(directory).unwrap();
 }

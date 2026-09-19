@@ -46,6 +46,7 @@ Current component progress (not M1 completion):
 - [ ] Managed WireGuard node and real transport adapter.
 - [x] OS firewall implementation of the kill-switch contract.
 - [x] Composed Linux client lifecycle for firewall, tunnel, routes and health.
+- [x] Bounded per-interface Linux DNS setup and fail-secure rollback.
 - [ ] End-to-end connect, disconnect and fail-safe integration tests.
 
 Exit criterion: a client can establish and safely tear down an authenticated

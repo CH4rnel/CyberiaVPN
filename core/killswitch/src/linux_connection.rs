@@ -8,11 +8,12 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use cyberia_transport::linux::{
-    CommandRunner, LinuxTools, LinuxWireGuardBackend, SystemCommandRunner,
+    CommandRunner, LinuxDnsBackend, LinuxDnsTools, LinuxTools, LinuxWireGuardBackend,
+    SystemCommandRunner,
 };
 use cyberia_transport::{
-    CancellationToken, ConnectContext, Session, Transport, TransportConfig, TransportError,
-    TransportHealth, TransportKind, WireGuardAdapter, WireGuardConfig,
+    CancellationToken, ConnectContext, DnsConfig, Session, Transport, TransportConfig,
+    TransportError, TransportHealth, TransportKind, WireGuardAdapter, WireGuardConfig,
 };
 
 use crate::linux::{
@@ -24,7 +25,9 @@ use crate::{ConnectionController, ConnectionError, FirewallError, KillSwitch, Tr
 pub struct LinuxConnectionSettings {
     pub interface: String,
     pub profile: WireGuardConfig,
+    pub dns: DnsConfig,
     pub tools: LinuxTools,
+    pub dns_tools: LinuxDnsTools,
     pub routing_mark: NonZeroU32,
     pub connect_timeout: Duration,
     pub always_on: bool,
@@ -34,12 +37,15 @@ type LinuxController<C, N> =
     ConnectionController<WireGuardAdapter<LinuxWireGuardBackend<C>>, NftablesBackend<N>>;
 
 /// Owns the complete Linux tunnel, routing and firewall lifecycle.
-pub struct LinuxWireGuardConnection<C, N> {
+pub struct LinuxWireGuardConnection<C, D, N> {
     controller: LinuxController<C, N>,
+    dns: LinuxDnsBackend<D>,
+    dns_config: DnsConfig,
+    interface: String,
     transport: TransportConfig,
 }
 
-impl<C: CommandRunner, N: NftablesRunner> LinuxWireGuardConnection<C, N> {
+impl<C: CommandRunner, D: CommandRunner, N: NftablesRunner> LinuxWireGuardConnection<C, D, N> {
     /// Builds a connection with injectable platform runners.
     ///
     /// # Errors
@@ -49,6 +55,7 @@ impl<C: CommandRunner, N: NftablesRunner> LinuxWireGuardConnection<C, N> {
     pub fn with_runners(
         settings: LinuxConnectionSettings,
         command_runner: C,
+        dns_runner: D,
         nftables_runner: N,
     ) -> Result<Self, LinuxConnectionBuildError> {
         let endpoint_address = settings
@@ -64,9 +71,12 @@ impl<C: CommandRunner, N: NftablesRunner> LinuxWireGuardConnection<C, N> {
             connect_timeout: settings.connect_timeout,
         };
         transport.validate()?;
+        settings.dns.validate()?;
+        let interface = settings.interface.clone();
         let backend =
             LinuxWireGuardBackend::new(settings.tools, command_runner, settings.routing_mark)?;
         let adapter = WireGuardAdapter::new(settings.interface, settings.profile, backend)?;
+        let dns = LinuxDnsBackend::new(settings.dns_tools, dns_runner)?;
         let firewall = NftablesBackend::new(
             NftablesConfig {
                 endpoint_address,
@@ -78,6 +88,9 @@ impl<C: CommandRunner, N: NftablesRunner> LinuxWireGuardConnection<C, N> {
             ConnectionController::new(KillSwitch::new(settings.always_on), adapter, firewall)?;
         Ok(Self {
             controller,
+            dns,
+            dns_config: settings.dns,
+            interface,
             transport,
         })
     }
@@ -94,7 +107,21 @@ impl<C: CommandRunner, N: NftablesRunner> LinuxWireGuardConnection<C, N> {
             deadline: Instant::now() + self.transport.connect_timeout,
             cancellation,
         };
-        self.controller.connect(&self.transport, &context)
+        let session = self.controller.connect(&self.transport, &context)?;
+        if let Err(dns_error) = self
+            .dns
+            .configure(&self.interface, &self.dns_config, &context)
+        {
+            return match self.controller.disconnect() {
+                Ok(()) => Err(ConnectionError::Transport(dns_error)),
+                Err(cleanup_error) => Err(ConnectionError::Transport(TransportError::Network(
+                    format!(
+                        "DNS setup failed: {dns_error}; tunnel cleanup failed: {cleanup_error}"
+                    ),
+                ))),
+            };
+        }
+        Ok(session)
     }
 
     /// Blocks non-tunnel traffic before removing routes and the interface.
@@ -103,6 +130,9 @@ impl<C: CommandRunner, N: NftablesRunner> LinuxWireGuardConnection<C, N> {
     ///
     /// Returns the lifecycle error when blocking or teardown cannot complete.
     pub fn disconnect(&mut self) -> Result<(), ConnectionError> {
+        self.dns
+            .revert(&self.interface)
+            .map_err(ConnectionError::Transport)?;
         self.controller.disconnect()
     }
 
@@ -125,7 +155,7 @@ impl<C: CommandRunner, N: NftablesRunner> LinuxWireGuardConnection<C, N> {
     }
 }
 
-impl LinuxWireGuardConnection<SystemCommandRunner, SystemNftablesRunner> {
+impl LinuxWireGuardConnection<SystemCommandRunner, SystemCommandRunner, SystemNftablesRunner> {
     /// Builds the production connection from validated system executables.
     ///
     /// # Errors
@@ -137,7 +167,7 @@ impl LinuxWireGuardConnection<SystemCommandRunner, SystemNftablesRunner> {
         nft_executable: PathBuf,
     ) -> Result<Self, LinuxConnectionBuildError> {
         let nftables = SystemNftablesRunner::new(nft_executable)?;
-        Self::with_runners(settings, SystemCommandRunner, nftables)
+        Self::with_runners(settings, SystemCommandRunner, SystemCommandRunner, nftables)
     }
 }
 

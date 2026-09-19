@@ -15,7 +15,9 @@ local test environments; deployment policy must decide which networks to allow.
 DNS resolvers must be valid, unscoped, non-unspecified, non-multicast addresses.
 Duplicates are rejected after comparing IPv4-mapped addresses with their IPv4
 equivalents. Distinct IPv4 and IPv6 resolvers can coexist. Validation preserves
-the original representation and ordering of accepted configuration fields.
+the original representation and ordering of accepted configuration fields. A
+profile contains between one and eight resolvers so application of platform DNS
+state remains bounded.
 Node transport capabilities must be supported and unique.
 
 Configuration versions are positive and strictly increase per device in the
@@ -125,14 +127,19 @@ failure counter. Command output accepted by the system runner is limited to
 
 `LinuxWireGuardConnection` is the managed client boundary. It derives the
 firewall exception from the same concrete IP endpoint used by the adapter,
-constructs the WireGuard, routing and nftables backends, owns the transport
-timeout, and exposes connect, health, disconnect and disable operations. A
-hostname endpoint is rejected before platform state changes because firewall
-rules must not depend on name resolution during a lifecycle transition.
+constructs the WireGuard, routing, DNS and nftables backends, owns the transport
+timeout, and exposes connect, health, disconnect and disable operations. Linux
+DNS uses a separately validated absolute `resolvectl` executable. It installs
+resolver addresses, the `~.` routing domain and the per-link default-route flag
+only after tunnel establishment. Partial DNS setup is reverted. A DNS failure
+restores `BlockNonTunnel` and tears down the tunnel; disconnect reverts DNS
+before removing tunnel resources. A hostname endpoint is rejected before
+platform state changes because firewall rules must not depend on name resolution
+during a lifecycle transition.
 
 Executable and key paths are deployment inputs and must reside on an operator-
-controlled filesystem. The transport backend does not install DNS policy or
-NAT, and the managed connection is not wired into a client executable yet.
+controlled filesystem. The transport backend does not install NAT, and the
+managed connection is not wired into a client executable yet.
 Before M1 can claim a working VPN tunnel, the complete path must run with least
 privilege inside an isolated Linux network namespace and demonstrate cleanup on
 failure.
