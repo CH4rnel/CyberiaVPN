@@ -1,5 +1,6 @@
 //! Linux process boundary used by platform transport backends.
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::IpAddr;
 use std::num::NonZeroU32;
@@ -9,11 +10,12 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    ConnectContext, DnsConfig, HealthStatus, TransportError, TransportHealth, WireGuardBackend,
-    WireGuardConfig,
+    AllowedIp, ConnectContext, DnsConfig, HealthStatus, TransportError, TransportHealth,
+    WireGuardBackend, WireGuardConfig, WireGuardNodeConfig, WireGuardNodePeer,
 };
 
 const MAXIMUM_HANDSHAKE_AGE_SECONDS: u64 = 180;
+const MAXIMUM_NODE_PEERS: usize = 4_096;
 
 /// One command invocation represented as an executable plus literal arguments.
 /// No shell parses these values.
@@ -211,6 +213,248 @@ impl LinuxTools {
                 "WireGuard private key must be a private regular file",
             ));
         }
+        Ok(())
+    }
+}
+
+/// Managed Linux `WireGuard` node interface and peer lifecycle.
+pub struct LinuxWireGuardNode<R> {
+    tools: LinuxTools,
+    runner: R,
+    active_interface: Option<String>,
+    peers: HashSet<[u8; 32]>,
+    assigned_routes: HashMap<AllowedIp, [u8; 32]>,
+}
+
+impl<R: CommandRunner> LinuxWireGuardNode<R> {
+    /// Creates a node manager from validated Linux tools and private key.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid configuration when the executables or key file cannot
+    /// be safely used.
+    pub fn new(tools: LinuxTools, runner: R) -> Result<Self, TransportError> {
+        tools.validate()?;
+        if tools.private_key.to_str().is_none() {
+            return Err(TransportError::InvalidConfig(
+                "WireGuard private key path is not UTF-8",
+            ));
+        }
+        Ok(Self {
+            tools,
+            runner,
+            active_interface: None,
+            peers: HashSet::new(),
+            assigned_routes: HashMap::new(),
+        })
+    }
+
+    fn command(&mut self, program: PathBuf, arguments: Vec<String>) -> Result<(), TransportError> {
+        self.runner.run(&CommandSpec { program, arguments })
+    }
+
+    fn delete_interface(&mut self, interface: &str) -> Result<(), TransportError> {
+        self.command(
+            self.tools.ip.clone(),
+            vec![
+                "link".into(),
+                "delete".into(),
+                "dev".into(),
+                interface.into(),
+            ],
+        )
+    }
+
+    /// Creates and configures the managed node interface.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation or command error and removes a partially configured
+    /// interface before returning when creation itself succeeded.
+    pub fn start(
+        &mut self,
+        interface: &str,
+        config: &WireGuardNodeConfig,
+        context: &ConnectContext,
+    ) -> Result<(), TransportError> {
+        if self.active_interface.is_some() {
+            return Err(TransportError::AlreadyConnected);
+        }
+        if !valid_interface(interface) {
+            return Err(TransportError::InvalidConfig(
+                "invalid WireGuard node interface name",
+            ));
+        }
+        config.validate()?;
+        context.check()?;
+        self.command(
+            self.tools.ip.clone(),
+            vec![
+                "link".into(),
+                "add".into(),
+                "dev".into(),
+                interface.into(),
+                "type".into(),
+                "wireguard".into(),
+            ],
+        )?;
+        if let Err(setup_error) = self.configure_node(interface, config, context) {
+            if let Err(cleanup_error) = self.delete_interface(interface) {
+                return Err(TransportError::Network(format!(
+                    "WireGuard node setup failed: {setup_error}; cleanup failed: {cleanup_error}"
+                )));
+            }
+            return Err(setup_error);
+        }
+        self.active_interface = Some(interface.into());
+        Ok(())
+    }
+
+    fn configure_node(
+        &mut self,
+        interface: &str,
+        config: &WireGuardNodeConfig,
+        context: &ConnectContext,
+    ) -> Result<(), TransportError> {
+        context.check()?;
+        self.command(
+            self.tools.wg.clone(),
+            vec![
+                "set".into(),
+                interface.into(),
+                "private-key".into(),
+                self.tools.private_key.to_string_lossy().into_owned(),
+                "listen-port".into(),
+                config.listen_port.to_string(),
+            ],
+        )?;
+        for address in &config.interface_addresses {
+            context.check()?;
+            self.command(
+                self.tools.ip.clone(),
+                vec![
+                    "address".into(),
+                    "add".into(),
+                    format!("{}/{}", address.address, address.prefix_length),
+                    "dev".into(),
+                    interface.into(),
+                ],
+            )?;
+        }
+        context.check()?;
+        self.command(
+            self.tools.ip.clone(),
+            vec![
+                "link".into(),
+                "set".into(),
+                "dev".into(),
+                interface.into(),
+                "mtu".into(),
+                config.mtu.to_string(),
+                "up".into(),
+            ],
+        )
+    }
+
+    /// Adds one peer after checking global key and route ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for inactive nodes, duplicate keys/routes, capacity or
+    /// command failures. State changes only after the command succeeds.
+    pub fn add_peer(&mut self, peer: &WireGuardNodePeer) -> Result<(), TransportError> {
+        peer.validate()?;
+        let interface = self
+            .active_interface
+            .clone()
+            .ok_or(TransportError::NotConnected)?;
+        if self.peers.len() >= MAXIMUM_NODE_PEERS {
+            return Err(TransportError::InvalidConfig(
+                "WireGuard node peer capacity reached",
+            ));
+        }
+        if self.peers.contains(&peer.public_key) {
+            return Err(TransportError::InvalidConfig(
+                "WireGuard node peer is already managed",
+            ));
+        }
+        if peer
+            .allowed_ips
+            .iter()
+            .any(|route| self.assigned_routes.contains_key(route))
+        {
+            return Err(TransportError::InvalidConfig(
+                "WireGuard node peer route is already assigned",
+            ));
+        }
+        let mut arguments = vec![
+            "set".into(),
+            interface,
+            "peer".into(),
+            encode_key(&peer.public_key),
+            "allowed-ips".into(),
+            peer.allowed_ips
+                .iter()
+                .map(|route| format!("{}/{}", route.network, route.prefix_length))
+                .collect::<Vec<_>>()
+                .join(","),
+        ];
+        if let Some(seconds) = peer.persistent_keepalive_seconds {
+            arguments.extend(["persistent-keepalive".into(), seconds.to_string()]);
+        }
+        self.command(self.tools.wg.clone(), arguments)?;
+        self.peers.insert(peer.public_key);
+        for route in &peer.allowed_ips {
+            self.assigned_routes.insert(*route, peer.public_key);
+        }
+        Ok(())
+    }
+
+    /// Removes one peer and releases all of its host routes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for inactive or unknown peers and command failures.
+    pub fn remove_peer(&mut self, public_key: &[u8; 32]) -> Result<(), TransportError> {
+        let interface = self
+            .active_interface
+            .clone()
+            .ok_or(TransportError::NotConnected)?;
+        if !self.peers.contains(public_key) {
+            return Err(TransportError::InvalidConfig(
+                "WireGuard node peer is not managed",
+            ));
+        }
+        self.command(
+            self.tools.wg.clone(),
+            vec![
+                "set".into(),
+                interface,
+                "peer".into(),
+                encode_key(public_key),
+                "remove".into(),
+            ],
+        )?;
+        self.peers.remove(public_key);
+        self.assigned_routes.retain(|_, owner| owner != public_key);
+        Ok(())
+    }
+
+    /// Removes the node interface and clears peer ownership after success.
+    ///
+    /// # Errors
+    ///
+    /// Returns not connected or the interface deletion error while retaining
+    /// ownership state for a later retry.
+    pub fn stop(&mut self) -> Result<(), TransportError> {
+        let interface = self
+            .active_interface
+            .clone()
+            .ok_or(TransportError::NotConnected)?;
+        self.delete_interface(&interface)?;
+        self.active_interface = None;
+        self.peers.clear();
+        self.assigned_routes.clear();
         Ok(())
     }
 }
