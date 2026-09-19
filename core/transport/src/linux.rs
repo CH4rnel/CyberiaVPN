@@ -2,16 +2,18 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::net::IpAddr;
 use std::num::NonZeroU32;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     AllowedIp, ConnectContext, DnsConfig, HealthStatus, TransportError, TransportHealth,
-    WireGuardBackend, WireGuardConfig, WireGuardNodeConfig, WireGuardNodeHealth, WireGuardNodePeer,
+    WireGuardBackend, WireGuardConfig, WireGuardNodeConfig, WireGuardNodeGatewayPolicy,
+    WireGuardNodeHealth, WireGuardNodePeer,
 };
 
 const MAXIMUM_HANDSHAKE_AGE_SECONDS: u64 = 180;
@@ -43,6 +45,17 @@ pub trait CommandRunner: Send {
     fn output(&mut self, command: &CommandSpec) -> Result<Vec<u8>, TransportError> {
         self.run(command)?;
         Ok(Vec::new())
+    }
+
+    /// Runs one command with bounded standard input and no shell.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the runner cannot safely provide command input.
+    fn input(&mut self, _command: &CommandSpec, _input: &[u8]) -> Result<(), TransportError> {
+        Err(TransportError::Network(
+            "platform command input is unsupported".into(),
+        ))
     }
 }
 
@@ -77,6 +90,201 @@ impl CommandRunner for SystemCommandRunner {
             reason.trim()
         )))
     }
+
+    fn input(&mut self, command: &CommandSpec, input: &[u8]) -> Result<(), TransportError> {
+        if input.len() > 64 * 1024 {
+            return Err(TransportError::Network(
+                "platform command input exceeds safe bounds".into(),
+            ));
+        }
+        let mut child = Command::new(&command.program)
+            .args(&command.arguments)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| {
+                TransportError::Network(format!("platform command failed to start: {error}"))
+            })?;
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| TransportError::Network("platform command stdin unavailable".into()))?
+            .write_all(input)
+            .map_err(|error| {
+                TransportError::Network(format!("platform command input failed: {error}"))
+            })?;
+        let output = child.wait_with_output().map_err(|error| {
+            TransportError::Network(format!("platform command wait failed: {error}"))
+        })?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason: String = stderr.chars().take(256).collect();
+        Err(TransportError::Network(format!(
+            "platform command exited with {}: {}",
+            output.status,
+            reason.trim()
+        )))
+    }
+}
+
+/// Validated tools for the restricted Linux node gateway.
+#[derive(Clone, Debug)]
+pub struct LinuxNodeGatewayTools {
+    pub nft: PathBuf,
+    pub sysctl: PathBuf,
+}
+
+impl LinuxNodeGatewayTools {
+    /// Validates absolute executable references.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid configuration for an untrusted tool path.
+    pub fn validate(&self) -> Result<(), TransportError> {
+        validate_executable(&self.nft)?;
+        validate_executable(&self.sysctl)
+    }
+}
+
+/// Owns one nftables table that restricts and NATs node client traffic.
+pub struct LinuxWireGuardNodeGateway<R> {
+    tools: LinuxNodeGatewayTools,
+    runner: R,
+    active: bool,
+}
+
+impl<R: CommandRunner> LinuxWireGuardNodeGateway<R> {
+    /// Creates a gateway from validated Linux tools.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid configuration when a tool path is not trusted.
+    pub fn new(tools: LinuxNodeGatewayTools, runner: R) -> Result<Self, TransportError> {
+        tools.validate()?;
+        Ok(Self {
+            tools,
+            runner,
+            active: false,
+        })
+    }
+
+    /// Enables a default-deny forwarding table and source NAT.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid policy, disabled kernel forwarding or an
+    /// nftables transaction failure. State changes only after nft succeeds.
+    pub fn enable(
+        &mut self,
+        wireguard_interface: &str,
+        uplink_interface: &str,
+        policy: &WireGuardNodeGatewayPolicy,
+        context: &ConnectContext,
+    ) -> Result<(), TransportError> {
+        if self.active {
+            return Err(TransportError::AlreadyConnected);
+        }
+        if !valid_interface(wireguard_interface)
+            || !valid_interface(uplink_interface)
+            || wireguard_interface == uplink_interface
+        {
+            return Err(TransportError::InvalidConfig(
+                "invalid WireGuard node gateway interface",
+            ));
+        }
+        policy.validate()?;
+        context.check()?;
+        for key in forwarding_keys(policy) {
+            let output = self.runner.output(&CommandSpec {
+                program: self.tools.sysctl.clone(),
+                arguments: vec!["-n".into(), key.into()],
+            })?;
+            if output != b"1\n" && output != b"1" {
+                return Err(TransportError::InvalidConfig(
+                    "kernel IP forwarding is disabled",
+                ));
+            }
+        }
+        context.check()?;
+        let rules = node_gateway_rules(wireguard_interface, uplink_interface, policy);
+        self.runner.input(
+            &CommandSpec {
+                program: self.tools.nft.clone(),
+                arguments: vec!["--file".into(), "-".into()],
+            },
+            rules.as_bytes(),
+        )?;
+        self.active = true;
+        Ok(())
+    }
+
+    /// Removes the complete owned nftables table.
+    ///
+    /// # Errors
+    ///
+    /// Returns not connected or the nftables transaction error while retaining
+    /// ownership for a later retry.
+    pub fn disable(&mut self) -> Result<(), TransportError> {
+        if !self.active {
+            return Err(TransportError::NotConnected);
+        }
+        self.runner.input(
+            &CommandSpec {
+                program: self.tools.nft.clone(),
+                arguments: vec!["--file".into(), "-".into()],
+            },
+            b"delete table inet cyberia_vpn_node\n",
+        )?;
+        self.active = false;
+        Ok(())
+    }
+}
+
+fn forwarding_keys(policy: &WireGuardNodeGatewayPolicy) -> Vec<&'static str> {
+    let mut keys = Vec::with_capacity(2);
+    if policy
+        .client_networks
+        .iter()
+        .any(|network| network.network.is_ipv4())
+    {
+        keys.push("net.ipv4.ip_forward");
+    }
+    if policy
+        .client_networks
+        .iter()
+        .any(|network| network.network.is_ipv6())
+    {
+        keys.push("net.ipv6.conf.all.forwarding");
+    }
+    keys
+}
+
+fn node_gateway_rules(
+    wireguard_interface: &str,
+    uplink_interface: &str,
+    policy: &WireGuardNodeGatewayPolicy,
+) -> String {
+    let mut rules = String::from(
+        "add table inet cyberia_vpn_node\nadd chain inet cyberia_vpn_node forward { type filter hook forward priority 0; policy drop; }\nadd chain inet cyberia_vpn_node postrouting { type nat hook postrouting priority 100; policy accept; }\nadd rule inet cyberia_vpn_node forward ct state established,related accept\n",
+    );
+    for network in &policy.client_networks {
+        let family = if network.network.is_ipv4() {
+            "ip"
+        } else {
+            "ip6"
+        };
+        let prefix = format!("{}/{}", network.network, network.prefix_length);
+        rules.push_str(&format!(
+            "add rule inet cyberia_vpn_node forward iifname \"{wireguard_interface}\" oifname \"{uplink_interface}\" {family} saddr {prefix} accept\n"
+        ));
+        rules.push_str(&format!(
+            "add rule inet cyberia_vpn_node postrouting oifname \"{uplink_interface}\" {family} saddr {prefix} masquerade\n"
+        ));
+    }
+    rules
 }
 
 /// Validated executable and private-key references for a Linux `WireGuard` backend.
