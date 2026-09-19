@@ -2,8 +2,10 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::net::IpAddr;
 use std::num::NonZeroU16;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,6 +34,48 @@ pub enum TransportKind {
     SoftEther,
     Socks5,
     HttpProxy,
+}
+
+/// Resolver policy delivered independently from a transport profile.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DnsConfig {
+    pub resolvers: Vec<IpAddr>,
+}
+
+impl DnsConfig {
+    /// Validates a bounded set of unicast resolver addresses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::InvalidConfig`] when the list is empty, too
+    /// large, contains an unusable address or repeats an address through an
+    /// IPv4-mapped IPv6 representation.
+    pub fn validate(&self) -> Result<(), TransportError> {
+        if self.resolvers.is_empty() || self.resolvers.len() > 8 {
+            return Err(TransportError::InvalidConfig(
+                "DNS resolver list must contain between 1 and 8 addresses",
+            ));
+        }
+        let mut unique = HashSet::with_capacity(self.resolvers.len());
+        for resolver in &self.resolvers {
+            let address = canonical_address(*resolver);
+            if address.is_unspecified() || address.is_multicast() || !unique.insert(address) {
+                return Err(TransportError::InvalidConfig(
+                    "invalid or duplicate DNS resolver",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn canonical_address(address: IpAddr) -> IpAddr {
+    match address {
+        IpAddr::V6(address) => address
+            .to_ipv4_mapped()
+            .map_or(IpAddr::V6(address), IpAddr::V4),
+        address @ IpAddr::V4(_) => address,
+    }
 }
 
 /// Public connection parameters. Credentials are deliberately supplied by a

@@ -2,6 +2,7 @@ package configuration_test
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
 	"testing"
 	"time"
@@ -100,5 +101,17 @@ func TestRejectsAmbiguousDNSResolvers(t *testing.T) {
 	config.DNS = []netip.Addr{netip.MustParseAddr("192.0.2.53"), netip.MustParseAddr("2001:db8::53")}
 	if err := config.Validate(testNow()); err != nil {
 		t.Fatalf("distinct dual-stack resolvers: %v", err)
+	}
+}
+
+func TestRejectsUnboundedDNSResolverList(t *testing.T) {
+	config := validConfig(testNow())
+	config.DNS = nil
+	for host := 1; host <= 9; host++ {
+		config.DNS = append(config.DNS, netip.MustParseAddr(fmt.Sprintf("192.0.2.%d", host)))
+	}
+
+	if err := config.Validate(time.Now()); !errors.Is(err, configuration.ErrInvalid) {
+		t.Fatalf("error = %v, want ErrInvalid", err)
 	}
 }

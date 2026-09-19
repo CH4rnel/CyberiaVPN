@@ -13,9 +13,10 @@ var (
 )
 
 const (
-	TransportWireGuard = "wireguard"
-	maximumLifetime    = 24 * time.Hour
-	maximumClockSkew   = 5 * time.Minute
+	TransportWireGuard  = "wireguard"
+	maximumLifetime     = 24 * time.Hour
+	maximumClockSkew    = 5 * time.Minute
+	maximumDNSResolvers = 8
 )
 
 // DeviceConfig contains public, short-lived connection parameters. Private
@@ -57,8 +58,8 @@ func (config DeviceConfig) Validate(now time.Time) error {
 		address.IsUnspecified() || address.IsMulticast() || config.Endpoint.Addr().Zone() != "" {
 		return fmt.Errorf("%w: endpoint must contain an unscoped unicast IP address and nonzero port", ErrInvalid)
 	}
-	if len(config.DNS) == 0 {
-		return fmt.Errorf("%w: at least one DNS resolver is required", ErrInvalid)
+	if len(config.DNS) == 0 || len(config.DNS) > maximumDNSResolvers {
+		return fmt.Errorf("%w: between 1 and %d DNS resolvers are required", ErrInvalid, maximumDNSResolvers)
 	}
 	if err := config.WireGuard.Validate(); err != nil {
 		return err
