@@ -9,7 +9,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    ConnectContext, HealthStatus, TransportError, TransportHealth, WireGuardBackend,
+    ConnectContext, DnsConfig, HealthStatus, TransportError, TransportHealth, WireGuardBackend,
     WireGuardConfig,
 };
 
@@ -83,6 +83,111 @@ pub struct LinuxTools {
     pub ip: PathBuf,
     pub wg: PathBuf,
     pub private_key: PathBuf,
+}
+
+/// Validated executable reference for systemd-resolved integration.
+#[derive(Clone, Debug)]
+pub struct LinuxDnsTools {
+    pub resolvectl: PathBuf,
+}
+
+impl LinuxDnsTools {
+    /// Validates the absolute `resolvectl` executable reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid configuration when the path is relative, is a symbolic
+    /// link or does not identify an executable regular file.
+    pub fn validate(&self) -> Result<(), TransportError> {
+        validate_executable(&self.resolvectl)
+    }
+}
+
+/// Applies and reverts per-interface DNS through systemd-resolved.
+pub struct LinuxDnsBackend<R> {
+    tools: LinuxDnsTools,
+    runner: R,
+    active_interface: Option<String>,
+}
+
+impl<R: CommandRunner> LinuxDnsBackend<R> {
+    /// Creates a DNS backend from a validated `resolvectl` executable.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid configuration when the executable cannot be trusted.
+    pub fn new(tools: LinuxDnsTools, runner: R) -> Result<Self, TransportError> {
+        tools.validate()?;
+        Ok(Self {
+            tools,
+            runner,
+            active_interface: None,
+        })
+    }
+
+    fn command(&mut self, arguments: Vec<String>) -> Result<(), TransportError> {
+        self.runner.run(&CommandSpec {
+            program: self.tools.resolvectl.clone(),
+            arguments,
+        })
+    }
+
+    /// Installs resolver addresses and routes all DNS lookups to the interface.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation or command error. A failure after resolver setup
+    /// attempts `resolvectl revert` before returning.
+    pub fn configure(
+        &mut self,
+        interface: &str,
+        config: &DnsConfig,
+        context: &ConnectContext,
+    ) -> Result<(), TransportError> {
+        if self.active_interface.is_some() {
+            return Err(TransportError::AlreadyConnected);
+        }
+        if !valid_interface(interface) {
+            return Err(TransportError::InvalidConfig("invalid DNS interface name"));
+        }
+        config.validate()?;
+        context.check()?;
+        let mut arguments = vec!["dns".into(), interface.into()];
+        arguments.extend(config.resolvers.iter().map(ToString::to_string));
+        self.command(arguments)?;
+
+        let setup_result = (|| {
+            context.check()?;
+            self.command(vec!["domain".into(), interface.into(), "~.".into()])?;
+            context.check()?;
+            self.command(vec!["default-route".into(), interface.into(), "yes".into()])
+        })();
+        if let Err(setup_error) = setup_result {
+            if let Err(cleanup_error) = self.command(vec!["revert".into(), interface.into()]) {
+                return Err(TransportError::Network(format!(
+                    "DNS setup failed: {setup_error}; cleanup failed: {cleanup_error}"
+                )));
+            }
+            return Err(setup_error);
+        }
+        self.active_interface = Some(interface.into());
+        Ok(())
+    }
+
+    /// Reverts all DNS state owned by the active interface.
+    ///
+    /// # Errors
+    ///
+    /// Returns not connected for a foreign interface or the command error
+    /// while retaining active ownership for a later retry.
+    pub fn revert(&mut self, interface: &str) -> Result<(), TransportError> {
+        if self.active_interface.as_deref() != Some(interface) {
+            return Err(TransportError::NotConnected);
+        }
+        self.command(vec!["revert".into(), interface.into()])?;
+        self.active_interface = None;
+        Ok(())
+    }
 }
 
 impl LinuxTools {
@@ -483,6 +588,14 @@ fn validate_executable(path: &Path) -> Result<(), TransportError> {
         ));
     }
     Ok(())
+}
+
+fn valid_interface(interface: &str) -> bool {
+    !interface.is_empty()
+        && interface.len() <= 15
+        && interface
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
 fn endpoint(endpoint: &crate::Endpoint) -> String {
