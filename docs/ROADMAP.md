@@ -44,7 +44,7 @@ Current component progress (not M1 completion):
 - [x] Shell-free Linux WireGuard interface setup with bounded partial-failure cleanup.
 - [x] Signed dual-stack WireGuard allowed-IP policy applied to Linux peers.
 - [x] Managed WireGuard node interface, client peers and real transport adapter.
-- [ ] Node forwarding/NAT and restricted production data path.
+- [x] Node forwarding/NAT and restricted production data path.
 - [x] OS firewall implementation of the kill-switch contract.
 - [x] Composed Linux client lifecycle for firewall, tunnel, routes and health.
 - [x] Bounded per-interface Linux DNS setup and fail-secure rollback.

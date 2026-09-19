@@ -87,6 +87,30 @@ impl WireGuardNodeGatewayPolicy {
         }
         Ok(())
     }
+
+    /// Ensures every routed client network is present on the node interface.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid configuration when the policy and interface subnets do
+    /// not describe the same address families and prefixes.
+    pub fn validate_for_node(&self, config: &WireGuardNodeConfig) -> Result<(), TransportError> {
+        self.validate()?;
+        config.validate()?;
+        if self.client_networks.len() != config.interface_addresses.len()
+            || self.client_networks.iter().any(|network| {
+                !config
+                    .interface_addresses
+                    .iter()
+                    .any(|address| network_matches_address(*network, *address))
+            })
+        {
+            return Err(TransportError::InvalidConfig(
+                "WireGuard node gateway networks do not match interface addresses",
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl WireGuardNodeConfig {
@@ -283,6 +307,24 @@ fn networks_overlap(left: AllowedIp, right: AllowedIp) -> bool {
             let prefix = left.prefix_length.min(right.prefix_length);
             let mask = u128::MAX << (128 - prefix);
             u128::from(left_address) & mask == u128::from(right_address) & mask
+        }
+        _ => false,
+    }
+}
+
+fn network_matches_address(network: AllowedIp, address: TunnelAddress) -> bool {
+    if network.prefix_length != address.prefix_length {
+        return false;
+    }
+    let prefix_length = network.prefix_length;
+    match (network.network, address.address) {
+        (IpAddr::V4(network), IpAddr::V4(address)) => {
+            let mask = u32::MAX << (32 - prefix_length);
+            u32::from(network) & mask == u32::from(address) & mask
+        }
+        (IpAddr::V6(network), IpAddr::V6(address)) => {
+            let mask = u128::MAX << (128 - prefix_length);
+            u128::from(network) & mask == u128::from(address) & mask
         }
         _ => false,
     }

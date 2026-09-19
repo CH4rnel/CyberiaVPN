@@ -287,6 +287,122 @@ fn node_gateway_rules(
     rules
 }
 
+/// Composes a managed `WireGuard` node with its restricted forwarding gateway.
+pub struct LinuxManagedWireGuardNode<NR, GR> {
+    interface: String,
+    uplink_interface: String,
+    node: LinuxWireGuardNode<NR>,
+    gateway: LinuxWireGuardNodeGateway<GR>,
+    active: bool,
+}
+
+impl<NR: CommandRunner, GR: CommandRunner> LinuxManagedWireGuardNode<NR, GR> {
+    /// Creates a composed node after validating both interface names.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid configuration for unsafe or identical interfaces.
+    pub fn new(
+        interface: String,
+        uplink_interface: String,
+        node: LinuxWireGuardNode<NR>,
+        gateway: LinuxWireGuardNodeGateway<GR>,
+    ) -> Result<Self, TransportError> {
+        if !valid_interface(&interface)
+            || !valid_interface(&uplink_interface)
+            || interface == uplink_interface
+        {
+            return Err(TransportError::InvalidConfig(
+                "invalid managed WireGuard node interface",
+            ));
+        }
+        Ok(Self {
+            interface,
+            uplink_interface,
+            node,
+            gateway,
+            active: false,
+        })
+    }
+
+    /// Starts the `WireGuard` interface before enabling restricted forwarding.
+    ///
+    /// # Errors
+    ///
+    /// Returns a node or gateway error. Gateway failure triggers interface
+    /// cleanup before returning.
+    pub fn start(
+        &mut self,
+        config: &WireGuardNodeConfig,
+        policy: &WireGuardNodeGatewayPolicy,
+        context: &ConnectContext,
+    ) -> Result<(), TransportError> {
+        if self.active {
+            return Err(TransportError::AlreadyConnected);
+        }
+        policy.validate_for_node(config)?;
+        self.node.start(&self.interface, config, context)?;
+        if let Err(setup_error) =
+            self.gateway
+                .enable(&self.interface, &self.uplink_interface, policy, context)
+        {
+            if let Err(cleanup_error) = self.node.stop() {
+                return Err(TransportError::Network(format!(
+                    "node gateway setup failed: {setup_error}; cleanup failed: {cleanup_error}"
+                )));
+            }
+            return Err(setup_error);
+        }
+        self.active = true;
+        Ok(())
+    }
+
+    /// Adds a peer to the active node.
+    ///
+    /// # Errors
+    ///
+    /// Returns not connected or the underlying peer error.
+    pub fn add_peer(&mut self, peer: &WireGuardNodePeer) -> Result<(), TransportError> {
+        if !self.active {
+            return Err(TransportError::NotConnected);
+        }
+        self.node.add_peer(peer)
+    }
+
+    /// Removes a peer from the active node.
+    ///
+    /// # Errors
+    ///
+    /// Returns not connected or the underlying peer error.
+    pub fn remove_peer(&mut self, public_key: &[u8; 32]) -> Result<(), TransportError> {
+        if !self.active {
+            return Err(TransportError::NotConnected);
+        }
+        self.node.remove_peer(public_key)
+    }
+
+    /// Returns aggregate node health without peer identifiers.
+    pub fn health(&mut self) -> WireGuardNodeHealth {
+        self.node.health()
+    }
+
+    /// Removes forwarding before deleting the `WireGuard` interface.
+    ///
+    /// # Errors
+    ///
+    /// Returns without deleting the interface when forwarding policy cannot be
+    /// removed, preserving ownership for a safe retry.
+    pub fn stop(&mut self) -> Result<(), TransportError> {
+        if !self.active {
+            return Err(TransportError::NotConnected);
+        }
+        self.gateway.disable()?;
+        self.node.stop()?;
+        self.active = false;
+        Ok(())
+    }
+}
+
 /// Validated executable and private-key references for a Linux `WireGuard` backend.
 #[derive(Clone, Debug)]
 pub struct LinuxTools {

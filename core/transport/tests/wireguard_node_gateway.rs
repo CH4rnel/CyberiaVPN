@@ -1,4 +1,8 @@
-use cyberia_transport::{AllowedIp, WireGuardNodeGatewayPolicy};
+use std::num::NonZeroU16;
+
+use cyberia_transport::{
+    AllowedIp, TunnelAddress, WireGuardNodeConfig, WireGuardNodeGatewayPolicy,
+};
 
 fn network(address: &str, prefix_length: u8) -> AllowedIp {
     AllowedIp {
@@ -45,4 +49,24 @@ fn rejects_duplicate_and_overlapping_networks() {
         };
         assert!(policy.validate().is_err());
     }
+}
+
+#[test]
+fn binds_gateway_networks_to_node_interface_subnets() {
+    let policy = WireGuardNodeGatewayPolicy {
+        client_networks: vec![network("10.20.0.0", 24)],
+    };
+    let matching = WireGuardNodeConfig {
+        listen_port: NonZeroU16::new(51820).unwrap(),
+        interface_addresses: vec![TunnelAddress {
+            address: "10.20.0.1".parse().unwrap(),
+            prefix_length: 24,
+        }],
+        mtu: 1420,
+    };
+    let mut mismatched = matching.clone();
+    mismatched.interface_addresses[0].address = "10.21.0.1".parse().unwrap();
+
+    assert_eq!(policy.validate_for_node(&matching), Ok(()));
+    assert!(policy.validate_for_node(&mismatched).is_err());
 }

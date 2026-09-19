@@ -134,6 +134,16 @@ reports drift without exposing peer keys; recent-handshake count is aggregate
 operational data. Interface startup uses the same private-key and executable
 validation as the client backend and deletes a partially configured interface.
 
+`LinuxWireGuardNodeGateway` requires kernel forwarding to be enabled by the
+operator and owns only the `inet cyberia_vpn_node` table. It installs the full
+default-deny forwarding and source-NAT policy through one shell-free nftables
+transaction. Only configured client subnets may leave through the configured
+uplink; unsolicited uplink traffic and lateral client traffic remain blocked.
+Client networks must be canonical, bounded and non-overlapping.
+`LinuxManagedWireGuardNode` creates the interface before the gateway and removes
+the gateway before the interface. Failed gateway setup removes the new node
+interface, while failed gateway teardown retains interface ownership for retry.
+
 `LinuxWireGuardConnection` is the managed client boundary. It derives the
 firewall exception from the same concrete IP endpoint used by the adapter,
 constructs the WireGuard, routing, DNS and nftables backends, owns the transport
@@ -147,8 +157,8 @@ platform state changes because firewall rules must not depend on name resolution
 during a lifecycle transition.
 
 Executable and key paths are deployment inputs and must reside on an operator-
-controlled filesystem. The transport backend does not install NAT, and the
-managed connection is not wired into a client executable yet.
+controlled filesystem. The managed connection is not wired into a client
+executable yet.
 Before M1 can claim a working VPN tunnel, the complete path must run with least
 privilege inside an isolated Linux network namespace and demonstrate cleanup on
 failure.
