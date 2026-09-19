@@ -43,7 +43,8 @@ Current component progress (not M1 completion):
 - [x] Fail-secure transport controller that arms the kill switch before connect and teardown.
 - [x] Shell-free Linux WireGuard interface setup with bounded partial-failure cleanup.
 - [x] Signed dual-stack WireGuard allowed-IP policy applied to Linux peers.
-- [ ] Managed WireGuard node and real transport adapter.
+- [x] Managed WireGuard node interface, client peers and real transport adapter.
+- [ ] Node forwarding/NAT and restricted production data path.
 - [x] OS firewall implementation of the kill-switch contract.
 - [x] Composed Linux client lifecycle for firewall, tunnel, routes and health.
 - [x] Bounded per-interface Linux DNS setup and fail-secure rollback.

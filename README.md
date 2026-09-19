@@ -43,7 +43,7 @@ apply output filtering through validated absolute `ip`, `wg` and `nft`
 executables. The managed Linux connection composes firewall, WireGuard policy
 routing, per-interface DNS, recent-handshake health and fail-secure teardown
 behind one lifecycle. M1 still requires client executable integration, a managed
-node and a privileged end-to-end tunnel connection test.
+node forwarding/NAT policy and a privileged end-to-end tunnel connection test.
 
 ## Local development
 

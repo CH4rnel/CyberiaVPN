@@ -5,7 +5,7 @@ use std::num::NonZeroU16;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cyberia_transport::linux::{CommandRunner, CommandSpec, LinuxTools, LinuxWireGuardNode};
 use cyberia_transport::{
@@ -16,6 +16,28 @@ use cyberia_transport::{
 struct Recorder {
     commands: Arc<Mutex<Vec<CommandSpec>>>,
     fail_at: Option<usize>,
+}
+
+struct HealthRunner {
+    commands: Arc<Mutex<Vec<CommandSpec>>>,
+    output: Vec<u8>,
+    fail_query: bool,
+}
+
+impl CommandRunner for HealthRunner {
+    fn run(&mut self, command: &CommandSpec) -> Result<(), TransportError> {
+        self.commands.lock().unwrap().push(command.clone());
+        Ok(())
+    }
+
+    fn output(&mut self, command: &CommandSpec) -> Result<Vec<u8>, TransportError> {
+        self.commands.lock().unwrap().push(command.clone());
+        if self.fail_query {
+            Err(TransportError::Network("query failed".into()))
+        } else {
+            Ok(self.output.clone())
+        }
+    }
 }
 
 impl CommandRunner for Recorder {
@@ -170,5 +192,56 @@ fn partial_node_setup_deletes_the_created_interface() {
     let commands = commands.lock().unwrap();
     assert_eq!(commands.len(), 3);
     assert_eq!(commands[2].arguments, ["link", "delete", "dev", "cynode0"]);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn reports_managed_peer_drift_and_recent_handshakes() {
+    let (tools, directory) = tools("health");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut node = LinuxWireGuardNode::new(
+        tools,
+        HealthRunner {
+            commands: Arc::new(Mutex::new(Vec::new())),
+            output: format!("peer-key\t{now}\n").into_bytes(),
+            fail_query: false,
+        },
+    )
+    .unwrap();
+    node.start("cynode0", &node_config(), &context()).unwrap();
+    node.add_peer(&peer(7, "10.0.0.2")).unwrap();
+
+    let health = node.health();
+
+    assert_eq!(health.status, cyberia_transport::HealthStatus::Healthy);
+    assert_eq!(health.configured_peers, 1);
+    assert_eq!(health.observed_peers, 1);
+    assert_eq!(health.recent_handshakes, 1);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn degrades_when_kernel_peer_state_differs_from_managed_state() {
+    let (tools, directory) = tools("drift");
+    let mut node = LinuxWireGuardNode::new(
+        tools,
+        HealthRunner {
+            commands: Arc::new(Mutex::new(Vec::new())),
+            output: Vec::new(),
+            fail_query: false,
+        },
+    )
+    .unwrap();
+    node.start("cynode0", &node_config(), &context()).unwrap();
+    node.add_peer(&peer(7, "10.0.0.2")).unwrap();
+
+    let health = node.health();
+
+    assert_eq!(health.status, cyberia_transport::HealthStatus::Degraded);
+    assert_eq!(health.configured_peers, 1);
+    assert_eq!(health.observed_peers, 0);
     fs::remove_dir_all(directory).unwrap();
 }

@@ -67,6 +67,16 @@ pub struct WireGuardNodePeer {
     pub persistent_keepalive_seconds: Option<u16>,
 }
 
+/// Operational state observed from a managed `WireGuard` node interface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WireGuardNodeHealth {
+    pub status: HealthStatus,
+    pub configured_peers: usize,
+    pub observed_peers: usize,
+    pub recent_handshakes: usize,
+    pub consecutive_failures: u32,
+}
+
 impl WireGuardNodePeer {
     /// Validates a bounded client peer profile.
     ///

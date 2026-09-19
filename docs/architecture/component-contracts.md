@@ -125,6 +125,15 @@ degraded. A failed query is unavailable and increments a saturating consecutive
 failure counter. Command output accepted by the system runner is limited to
 64 KiB.
 
+`LinuxWireGuardNode` owns one server interface and up to 4096 client peers. M1
+peer profiles accept only unique host routes, preventing a client from claiming
+a default route or another subnet. Peer keys and host routes become managed
+only after `wg set` succeeds and remain owned when removal fails. Node health
+compares the managed peer count with `wg show <interface> latest-handshakes` and
+reports drift without exposing peer keys; recent-handshake count is aggregate
+operational data. Interface startup uses the same private-key and executable
+validation as the client backend and deletes a partially configured interface.
+
 `LinuxWireGuardConnection` is the managed client boundary. It derives the
 firewall exception from the same concrete IP endpoint used by the adapter,
 constructs the WireGuard, routing, DNS and nftables backends, owns the transport

@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     AllowedIp, ConnectContext, DnsConfig, HealthStatus, TransportError, TransportHealth,
-    WireGuardBackend, WireGuardConfig, WireGuardNodeConfig, WireGuardNodePeer,
+    WireGuardBackend, WireGuardConfig, WireGuardNodeConfig, WireGuardNodeHealth, WireGuardNodePeer,
 };
 
 const MAXIMUM_HANDSHAKE_AGE_SECONDS: u64 = 180;
@@ -224,6 +224,7 @@ pub struct LinuxWireGuardNode<R> {
     active_interface: Option<String>,
     peers: HashSet<[u8; 32]>,
     assigned_routes: HashMap<AllowedIp, [u8; 32]>,
+    health_failures: u32,
 }
 
 impl<R: CommandRunner> LinuxWireGuardNode<R> {
@@ -246,6 +247,7 @@ impl<R: CommandRunner> LinuxWireGuardNode<R> {
             active_interface: None,
             peers: HashSet::new(),
             assigned_routes: HashMap::new(),
+            health_failures: 0,
         })
     }
 
@@ -456,6 +458,56 @@ impl<R: CommandRunner> LinuxWireGuardNode<R> {
         self.peers.clear();
         self.assigned_routes.clear();
         Ok(())
+    }
+
+    /// Observes kernel peer state and recent handshakes without exposing keys.
+    pub fn health(&mut self) -> WireGuardNodeHealth {
+        let configured_peers = self.peers.len();
+        let Some(interface) = self.active_interface.clone() else {
+            return WireGuardNodeHealth {
+                status: HealthStatus::Unavailable,
+                configured_peers,
+                observed_peers: 0,
+                recent_handshakes: 0,
+                consecutive_failures: self.health_failures,
+            };
+        };
+        let command = CommandSpec {
+            program: self.tools.wg.clone(),
+            arguments: vec!["show".into(), interface, "latest-handshakes".into()],
+        };
+        let Ok(output) = self.runner.output(&command) else {
+            self.health_failures = self.health_failures.saturating_add(1);
+            return WireGuardNodeHealth {
+                status: HealthStatus::Unavailable,
+                configured_peers,
+                observed_peers: 0,
+                recent_handshakes: 0,
+                consecutive_failures: self.health_failures,
+            };
+        };
+        let Some((observed_peers, recent_handshakes)) = node_handshakes(&output) else {
+            self.health_failures = self.health_failures.saturating_add(1);
+            return WireGuardNodeHealth {
+                status: HealthStatus::Unavailable,
+                configured_peers,
+                observed_peers: 0,
+                recent_handshakes: 0,
+                consecutive_failures: self.health_failures,
+            };
+        };
+        self.health_failures = 0;
+        WireGuardNodeHealth {
+            status: if observed_peers == configured_peers {
+                HealthStatus::Healthy
+            } else {
+                HealthStatus::Degraded
+            },
+            configured_peers,
+            observed_peers,
+            recent_handshakes,
+            consecutive_failures: 0,
+        }
     }
 }
 
@@ -817,6 +869,28 @@ fn latest_handshake(output: &[u8]) -> Option<u64> {
         .filter_map(|line| line.split_ascii_whitespace().nth(1)?.parse().ok())
         .max()
         .filter(|timestamp| *timestamp != 0)
+}
+
+fn node_handshakes(output: &[u8]) -> Option<(usize, usize)> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut observed = 0;
+    let mut recent = 0;
+    for line in std::str::from_utf8(output).ok()?.lines() {
+        let mut fields = line.split_ascii_whitespace();
+        fields.next()?;
+        let timestamp: u64 = fields.next()?.parse().ok()?;
+        if fields.next().is_some() {
+            return None;
+        }
+        observed += 1;
+        if timestamp != 0 && timestamp <= now && now - timestamp <= MAXIMUM_HANDSHAKE_AGE_SECONDS {
+            recent += 1;
+        }
+    }
+    Some((observed, recent))
 }
 
 fn validate_executable(path: &Path) -> Result<(), TransportError> {
