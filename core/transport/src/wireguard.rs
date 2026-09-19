@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
+use std::num::NonZeroU16;
 
 use crate::{
     ConnectContext, Endpoint, HealthStatus, Session, Transport, TransportConfig, TransportError,
@@ -36,6 +37,75 @@ pub struct WireGuardConfig {
     pub mtu: u16,
 }
 
+/// Local interface parameters for a managed `WireGuard` node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WireGuardNodeConfig {
+    pub listen_port: NonZeroU16,
+    pub interface_addresses: Vec<TunnelAddress>,
+    pub mtu: u16,
+}
+
+impl WireGuardNodeConfig {
+    /// Validates bounded node interface parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::InvalidConfig`] for missing, duplicate or
+    /// unusable interface addresses and MTU values outside safe bounds.
+    pub fn validate(&self) -> Result<(), TransportError> {
+        validate_interface_addresses(&self.interface_addresses)?;
+        validate_mtu(self.mtu)
+    }
+}
+
+/// One client peer provisioned on a managed `WireGuard` node. M1 peers receive
+/// host routes only; routed site-to-site subnets require a separate policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WireGuardNodePeer {
+    pub public_key: [u8; 32],
+    pub allowed_ips: Vec<AllowedIp>,
+    pub persistent_keepalive_seconds: Option<u16>,
+}
+
+impl WireGuardNodePeer {
+    /// Validates a bounded client peer profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::InvalidConfig`] for a zero key, missing,
+    /// duplicate or non-host routes, and unsafe keepalive intervals.
+    pub fn validate(&self) -> Result<(), TransportError> {
+        if self.public_key.iter().all(|byte| *byte == 0) {
+            return Err(TransportError::InvalidConfig(
+                "WireGuard node peer public key is zero",
+            ));
+        }
+        if self.allowed_ips.is_empty() || self.allowed_ips.len() > 16 {
+            return Err(TransportError::InvalidConfig(
+                "WireGuard node peer requires between 1 and 16 host routes",
+            ));
+        }
+        let mut unique = HashSet::with_capacity(self.allowed_ips.len());
+        for allowed_ip in &self.allowed_ips {
+            let host_prefix = if allowed_ip.network.is_ipv4() {
+                32
+            } else {
+                128
+            };
+            if allowed_ip.prefix_length != host_prefix
+                || allowed_ip.network.is_unspecified()
+                || allowed_ip.network.is_multicast()
+                || !unique.insert(*allowed_ip)
+            {
+                return Err(TransportError::InvalidConfig(
+                    "invalid or duplicate WireGuard node peer host route",
+                ));
+            }
+        }
+        validate_keepalive(self.persistent_keepalive_seconds)
+    }
+}
+
 impl WireGuardConfig {
     /// Validates public peer and interface parameters before adapter use.
     ///
@@ -52,32 +122,7 @@ impl WireGuardConfig {
         if self.endpoint.host.trim().is_empty() {
             return Err(TransportError::InvalidConfig("endpoint host is empty"));
         }
-        if self.tunnel_addresses.is_empty() {
-            return Err(TransportError::InvalidConfig(
-                "WireGuard tunnel address list is empty",
-            ));
-        }
-        let mut unique_addresses = HashSet::with_capacity(self.tunnel_addresses.len());
-        for tunnel_address in &self.tunnel_addresses {
-            let maximum_prefix = if tunnel_address.address.is_ipv4() {
-                32
-            } else {
-                128
-            };
-            if tunnel_address.prefix_length > maximum_prefix
-                || tunnel_address.address.is_unspecified()
-                || tunnel_address.address.is_multicast()
-            {
-                return Err(TransportError::InvalidConfig(
-                    "invalid tunnel address prefix",
-                ));
-            }
-            if !unique_addresses.insert(tunnel_address.address) {
-                return Err(TransportError::InvalidConfig(
-                    "duplicate WireGuard tunnel address",
-                ));
-            }
-        }
+        validate_interface_addresses(&self.tunnel_addresses)?;
         if self.allowed_ips.is_empty() || self.allowed_ips.len() > 64 {
             return Err(TransportError::InvalidConfig(
                 "WireGuard allowed IP list must contain between 1 and 64 prefixes",
@@ -91,21 +136,57 @@ impl WireGuardConfig {
                 ));
             }
         }
-        if self
-            .persistent_keepalive_seconds
-            .is_some_and(|seconds| seconds == 0 || seconds > MAXIMUM_KEEPALIVE_SECONDS)
+        validate_keepalive(self.persistent_keepalive_seconds)?;
+        validate_mtu(self.mtu)
+    }
+}
+
+fn validate_interface_addresses(addresses: &[TunnelAddress]) -> Result<(), TransportError> {
+    if addresses.is_empty() || addresses.len() > 16 {
+        return Err(TransportError::InvalidConfig(
+            "WireGuard interface requires between 1 and 16 addresses",
+        ));
+    }
+    let mut unique = HashSet::with_capacity(addresses.len());
+    for tunnel_address in addresses {
+        let maximum_prefix = if tunnel_address.address.is_ipv4() {
+            32
+        } else {
+            128
+        };
+        if tunnel_address.prefix_length > maximum_prefix
+            || tunnel_address.address.is_unspecified()
+            || tunnel_address.address.is_multicast()
         {
             return Err(TransportError::InvalidConfig(
-                "WireGuard keepalive is outside safe bounds",
+                "invalid tunnel address prefix",
             ));
         }
-        if !(MINIMUM_MTU..=MAXIMUM_MTU).contains(&self.mtu) {
+        if !unique.insert(tunnel_address.address) {
             return Err(TransportError::InvalidConfig(
-                "WireGuard MTU is outside safe bounds",
+                "duplicate WireGuard tunnel address",
             ));
         }
-        Ok(())
     }
+    Ok(())
+}
+
+fn validate_keepalive(seconds: Option<u16>) -> Result<(), TransportError> {
+    if seconds.is_some_and(|seconds| seconds == 0 || seconds > MAXIMUM_KEEPALIVE_SECONDS) {
+        return Err(TransportError::InvalidConfig(
+            "WireGuard keepalive is outside safe bounds",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_mtu(mtu: u16) -> Result<(), TransportError> {
+    if !(MINIMUM_MTU..=MAXIMUM_MTU).contains(&mtu) {
+        return Err(TransportError::InvalidConfig(
+            "WireGuard MTU is outside safe bounds",
+        ));
+    }
+    Ok(())
 }
 
 fn valid_network(allowed_ip: AllowedIp) -> bool {
