@@ -14,3 +14,7 @@ sudo tests/e2e/linux-wireguard-namespace.sh
 Each scenario checks its prerequisites before creating any namespace. It uses a
 unique namespace suffix, deletes all created namespaces through an exit trap and
 never changes the host routing or nftables tables.
+
+`linux-wireguard-namespace.sh` creates two namespaces joined by a veth underlay,
+configures both ends of a WireGuard tunnel, proves encrypted ICMP traffic and
+then verifies that the client interface was removed.
