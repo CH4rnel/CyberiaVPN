@@ -3,13 +3,9 @@
 
 set -euo pipefail
 
-require_linux_e2e_prerequisites() {
+require_linux_e2e_tools() {
     if [[ "$(uname -s)" != "Linux" ]]; then
         printf '%s\n' 'Linux network E2E tests require Linux' >&2
-        return 1
-    fi
-    if [[ "$(id -u)" -ne 0 ]]; then
-        printf '%s\n' 'Linux network E2E tests require root or CAP_NET_ADMIN' >&2
         return 1
     fi
     local command
@@ -19,6 +15,14 @@ require_linux_e2e_prerequisites() {
             return 1
         fi
     done
+}
+
+require_linux_e2e_prerequisites() {
+    require_linux_e2e_tools || return
+    if [[ "$(id -u)" -ne 0 ]]; then
+        printf '%s\n' 'Linux network E2E tests require root or CAP_NET_ADMIN' >&2
+        return 1
+    fi
 }
 
 wait_for_link() {

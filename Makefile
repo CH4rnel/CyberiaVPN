@@ -1,4 +1,4 @@
-.PHONY: check format-check rust-check go-check e2e-shell-check e2e-linux
+.PHONY: check format-check rust-check go-check e2e-shell-check e2e-linux-preflight e2e-linux
 
 check: format-check rust-check go-check e2e-shell-check
 
@@ -18,6 +18,9 @@ e2e-shell-check:
 	@bash -n tests/e2e/linux-common.sh tests/e2e/linux-common.test.sh \
 		tests/e2e/linux-wireguard-namespace.sh tests/e2e/linux-client-failsafe-namespace.sh
 	@bash tests/e2e/linux-common.test.sh
+
+e2e-linux-preflight:
+	@tests/e2e/linux-preflight.sh
 
 e2e-linux:
 	@tests/e2e/linux-wireguard-namespace.sh

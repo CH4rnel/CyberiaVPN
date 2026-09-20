@@ -14,6 +14,13 @@ sudo tests/e2e/linux-wireguard-namespace.sh
 sudo make e2e-linux
 ```
 
+Before scheduling privileged scenarios on a runner, execute the non-mutating
+preflight check:
+
+```sh
+make e2e-linux-preflight
+```
+
 By default the client fail-safe scenario builds the debug binary with `cargo`.
 On a dedicated privileged runner, pass an already-built artifact instead:
 
