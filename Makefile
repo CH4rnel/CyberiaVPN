@@ -1,4 +1,4 @@
-.PHONY: check format-check rust-check go-check
+.PHONY: check format-check rust-check go-check e2e-linux
 
 check: format-check rust-check go-check
 
@@ -13,3 +13,7 @@ rust-check:
 go-check:
 	@go vet ./services/control-api/...
 	@go test -race ./services/control-api/...
+
+e2e-linux:
+	@tests/e2e/linux-wireguard-namespace.sh
+	@tests/e2e/linux-client-failsafe-namespace.sh

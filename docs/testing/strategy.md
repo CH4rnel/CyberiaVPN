@@ -32,3 +32,8 @@ test keys that can never be mistaken for deployable secrets.
   coverage for selection/failover.
 - **M4–M5:** security review, load/soak tests, SBOM, signed artifacts, restore,
   rollback, incident and disaster-recovery drills.
+
+The privileged M1 Linux scenarios live in `tests/e2e/` and are run explicitly
+with `sudo make e2e-linux`. They create isolated namespaces and do not mutate
+host routes or host nftables tables. They are intentionally outside the default
+CI job because hosted runners do not provide the required capabilities.
