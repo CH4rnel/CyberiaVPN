@@ -13,7 +13,7 @@ require_linux_e2e_prerequisites() {
         return 1
     fi
     local command
-    for command in ip wg nft ping; do
+    for command in base64 ip nft od ping wg; do
         if ! command -v "$command" >/dev/null 2>&1; then
             printf 'Linux network E2E tests require %s in PATH\n' "$command" >&2
             return 1
