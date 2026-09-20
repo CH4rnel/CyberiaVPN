@@ -27,3 +27,7 @@ client namespace with a generated key and a no-op resolver stub. It proves
 tunnel traffic, removes the tunnel underneath the client, verifies that ordinary
 underlay ICMP is blocked, and confirms that a failed teardown retains the
 default-deny nftables policy.
+
+On failure, the scenarios preserve the nonzero exit status and print interface,
+address, WireGuard and owned nftables-table state for each namespace. They do
+not print generated private keys or client configuration content.

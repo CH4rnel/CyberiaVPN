@@ -43,3 +43,12 @@ assert_command_fails() {
         return 1
     fi
 }
+
+report_namespace_diagnostics() {
+    local namespace="$1"
+    printf '%s\n' "--- diagnostics for namespace $namespace ---" >&2
+    ip -n "$namespace" link show >&2 || true
+    ip -n "$namespace" address show >&2 || true
+    ip netns exec "$namespace" wg show >&2 || true
+    ip netns exec "$namespace" nft list table inet cyberia_vpn >&2 || true
+}

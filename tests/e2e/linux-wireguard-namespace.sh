@@ -17,13 +17,20 @@ node_tunnel="wg-e2e-n"
 work_directory="$(mktemp -d /tmp/cyberia-vpn-e2e.XXXXXX)"
 
 cleanup() {
+    local result="$1"
+    if (( result != 0 )); then
+        report_namespace_diagnostics "$client_namespace"
+        report_namespace_diagnostics "$node_namespace"
+    fi
     ip netns del "$client_namespace" >/dev/null 2>&1 || true
     ip netns del "$node_namespace" >/dev/null 2>&1 || true
     if [[ "$work_directory" == /tmp/cyberia-vpn-e2e.* ]]; then
         rm -rf "$work_directory"
     fi
+    trap - EXIT
+    exit "$result"
 }
-trap cleanup EXIT
+trap 'cleanup $?' EXIT
 
 ip netns add "$client_namespace"
 ip netns add "$node_namespace"

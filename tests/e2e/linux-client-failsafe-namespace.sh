@@ -22,6 +22,11 @@ work_directory="$(mktemp -d /tmp/cyberia-vpn-e2e.XXXXXX)"
 client_pid=""
 
 cleanup() {
+    local result="$1"
+    if (( result != 0 )); then
+        report_namespace_diagnostics "$client_namespace"
+        report_namespace_diagnostics "$node_namespace"
+    fi
     if [[ -n "$client_pid" ]]; then
         kill "$client_pid" >/dev/null 2>&1 || true
         wait "$client_pid" >/dev/null 2>&1 || true
@@ -31,8 +36,10 @@ cleanup() {
     if [[ "$work_directory" == /tmp/cyberia-vpn-e2e.* ]]; then
         rm -rf "$work_directory"
     fi
+    trap - EXIT
+    exit "$result"
 }
-trap cleanup EXIT
+trap 'cleanup $?' EXIT
 
 cargo build -p cyberia-linux-client --quiet
 client_binary="$repository_root/target/debug/cyberia-linux-client"
