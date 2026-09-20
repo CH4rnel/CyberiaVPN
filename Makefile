@@ -16,7 +16,8 @@ go-check:
 
 e2e-shell-check:
 	@bash -n tests/e2e/linux-common.sh tests/e2e/linux-common.test.sh \
-		tests/e2e/linux-wireguard-namespace.sh tests/e2e/linux-client-failsafe-namespace.sh
+		tests/e2e/linux-preflight.sh tests/e2e/linux-wireguard-namespace.sh \
+		tests/e2e/linux-client-failsafe-namespace.sh
 	@bash tests/e2e/linux-common.test.sh
 
 e2e-linux-preflight:

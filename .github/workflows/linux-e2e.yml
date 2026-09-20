@@ -20,6 +20,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.85.0
+      - name: Verify privileged runner prerequisites
+        run: make e2e-linux-preflight
       - name: Build Linux client
         run: cargo build --locked -p cyberia-linux-client
       - name: Run isolated WireGuard scenarios

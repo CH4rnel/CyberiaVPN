@@ -14,6 +14,12 @@ absolute artifact through `CYBERIA_CLIENT_BINARY`. This avoids depending on the
 root user's Rust installation. `make e2e-linux` performs a prerequisite check
 before it creates a namespace and cleans all created namespaces on exit.
 
+Before registering the runner, execute `make e2e-linux-preflight` as the runner
+service account. It does not create a namespace; it verifies the required Linux
+tools, `ip netns` access, an available client build path and passwordless sudo.
+The workflow repeats this check before it builds or invokes the privileged test
+suite.
+
 Trigger the workflow only from a reviewed commit. A successful default CI run
 does not certify the privileged tests, and a privileged test result does not
 replace normal Rust, Go or review gates.
