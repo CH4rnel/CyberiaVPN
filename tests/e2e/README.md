@@ -14,6 +14,14 @@ sudo tests/e2e/linux-wireguard-namespace.sh
 sudo make e2e-linux
 ```
 
+By default the client fail-safe scenario builds the debug binary with `cargo`.
+On a dedicated privileged runner, pass an already-built artifact instead:
+
+```sh
+sudo env CYBERIA_CLIENT_BINARY=/absolute/path/cyberia-linux-client \
+  tests/e2e/linux-client-failsafe-namespace.sh
+```
+
 Each scenario checks its prerequisites before creating any namespace. It uses a
 unique namespace suffix, deletes all created namespaces through an exit trap and
 never changes the host routing or nftables tables.

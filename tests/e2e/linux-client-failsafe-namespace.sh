@@ -6,10 +6,6 @@ repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repository_root/tests/e2e/linux-common.sh"
 
 require_linux_e2e_prerequisites
-if ! command -v cargo >/dev/null 2>&1; then
-    printf '%s\n' 'Linux client E2E test requires cargo in PATH' >&2
-    exit 1
-fi
 
 suffix="${RANDOM}${RANDOM}"
 client_namespace="cvpn-c-${suffix: -8}"
@@ -41,8 +37,20 @@ cleanup() {
 }
 trap 'cleanup $?' EXIT
 
-cargo build -p cyberia-linux-client --quiet
-client_binary="$repository_root/target/debug/cyberia-linux-client"
+if [[ -n "${CYBERIA_CLIENT_BINARY:-}" ]]; then
+    client_binary="$CYBERIA_CLIENT_BINARY"
+    if [[ "$client_binary" != /* || ! -f "$client_binary" || ! -x "$client_binary" ]]; then
+        printf '%s\n' 'CYBERIA_CLIENT_BINARY must be an absolute executable regular file' >&2
+        exit 1
+    fi
+else
+    if ! command -v cargo >/dev/null 2>&1; then
+        printf '%s\n' 'Linux client E2E test requires cargo or CYBERIA_CLIENT_BINARY' >&2
+        exit 1
+    fi
+    cargo build -p cyberia-linux-client --quiet
+    client_binary="$repository_root/target/debug/cyberia-linux-client"
+fi
 
 ip netns add "$client_namespace"
 ip netns add "$node_namespace"
