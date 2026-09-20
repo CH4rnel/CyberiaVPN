@@ -1,0 +1,28 @@
+name: Linux E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  namespace:
+    name: Privileged namespace tests
+    runs-on: [self-hosted, linux, cyberia-vpn-e2e]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.85.0
+      - name: Build Linux client
+        run: cargo build --locked -p cyberia-linux-client
+      - name: Run isolated WireGuard scenarios
+        env:
+          CYBERIA_CLIENT_BINARY: ${{ github.workspace }}/target/debug/cyberia-linux-client
+        run: sudo --preserve-env=CYBERIA_CLIENT_BINARY make e2e-linux

@@ -39,3 +39,8 @@ default-deny nftables policy.
 On failure, the scenarios preserve the nonzero exit status and print interface,
 address, WireGuard and owned nftables-table state for each namespace. They do
 not print generated private keys or client configuration content.
+
+For a repeatable GitHub Actions run, use the manual `Linux E2E` workflow on a
+dedicated `cyberia-vpn-e2e` self-hosted runner. See
+[`docs/operations/linux-e2e-runner.md`](../../docs/operations/linux-e2e-runner.md)
+for host and privilege requirements.
