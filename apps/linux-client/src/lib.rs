@@ -4,7 +4,7 @@
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::net::IpAddr;
 use std::num::{NonZeroU16, NonZeroU32};
@@ -12,6 +12,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use fs2::FileExt;
 use serde::Deserialize;
 
 use cyberia_killswitch::ConnectionError;
@@ -23,6 +24,76 @@ use cyberia_transport::{
 };
 
 const MAXIMUM_CONFIG_SIZE: u64 = 1024 * 1024;
+
+/// Exclusive ownership of one managed interface lifecycle.
+pub struct InterfaceLease {
+    _file: File,
+}
+
+/// Acquires a nonblocking exclusive lease for a validated interface name.
+///
+/// # Errors
+///
+/// Returns [`LeaseError::InUse`] while another client owns the same interface,
+/// or an error for unsafe runtime state.
+pub fn acquire_interface_lease(
+    runtime_directory: &Path,
+    interface: &str,
+) -> Result<InterfaceLease, LeaseError> {
+    if !valid_interface_name(interface) {
+        return Err(LeaseError::UnsafeInterface);
+    }
+    let path = runtime_directory.join(format!("interface-{interface}.lock"));
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(LeaseError::Io)?;
+    let metadata = file.metadata().map_err(LeaseError::Io)?;
+    if !metadata.file_type().is_file() || metadata.permissions().mode() & 0o077 != 0 {
+        return Err(LeaseError::UnsafeState);
+    }
+    file.try_lock_exclusive().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            LeaseError::InUse
+        } else {
+            LeaseError::Io(error)
+        }
+    })?;
+    Ok(InterfaceLease { _file: file })
+}
+
+fn valid_interface_name(interface: &str) -> bool {
+    !interface.is_empty()
+        && interface.len() <= 15
+        && interface.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.'
+        })
+}
+
+#[derive(Debug)]
+pub enum LeaseError {
+    UnsafeInterface,
+    UnsafeState,
+    InUse,
+    Io(std::io::Error),
+}
+
+impl Display for LeaseError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsafeInterface => formatter.write_str("client interface name is unsafe"),
+            Self::UnsafeState => formatter.write_str("client interface lock state is unsafe"),
+            Self::InUse => formatter.write_str("another client already manages this interface"),
+            Self::Io(error) => write!(formatter, "client interface lease failed: {error}"),
+        }
+    }
+}
+
+impl Error for LeaseError {}
 
 /// Private local inputs needed to build one managed Linux connection.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
