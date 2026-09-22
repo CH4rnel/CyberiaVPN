@@ -40,6 +40,7 @@ pub fn acquire_interface_lease(
     runtime_directory: &Path,
     interface: &str,
 ) -> Result<InterfaceLease, LeaseError> {
+    validate_lease_directory(runtime_directory)?;
     if !valid_interface_name(interface) {
         return Err(LeaseError::UnsafeInterface);
     }
@@ -64,6 +65,20 @@ pub fn acquire_interface_lease(
         }
     })?;
     Ok(InterfaceLease { _file: file })
+}
+
+fn validate_lease_directory(runtime_directory: &Path) -> Result<(), LeaseError> {
+    if !runtime_directory.is_absolute() {
+        return Err(LeaseError::UnsafeState);
+    }
+    let metadata = std::fs::symlink_metadata(runtime_directory).map_err(LeaseError::Io)?;
+    if !metadata.file_type().is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err(LeaseError::UnsafeState);
+    }
+    Ok(())
 }
 
 fn valid_interface_name(interface: &str) -> bool {
