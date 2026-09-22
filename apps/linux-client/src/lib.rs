@@ -29,6 +29,7 @@ const MAXIMUM_CONFIG_SIZE: u64 = 1024 * 1024;
 #[serde(deny_unknown_fields)]
 pub struct ClientConfig {
     pub interface: String,
+    pub runtime_directory: PathBuf,
     pub endpoint_address: IpAddr,
     pub endpoint_port: u16,
     pub peer_public_key_hex: String,
@@ -94,7 +95,22 @@ pub fn load_config(path: &Path) -> Result<ClientConfig, ConfigError> {
     let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
     let config = ClientConfig::deserialize(&mut deserializer).map_err(ConfigError::Json)?;
     deserializer.end().map_err(ConfigError::Json)?;
+    validate_private_directory(&config.runtime_directory)?;
     Ok(config)
+}
+
+fn validate_private_directory(path: &Path) -> Result<(), ConfigError> {
+    if !path.is_absolute() {
+        return Err(ConfigError::UnsafeRuntimeDirectory);
+    }
+    let metadata = std::fs::symlink_metadata(path).map_err(ConfigError::Io)?;
+    if !metadata.file_type().is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err(ConfigError::UnsafeRuntimeDirectory);
+    }
+    Ok(())
 }
 
 impl ClientConfig {
@@ -268,6 +284,7 @@ pub enum ConfigError {
     Io(std::io::Error),
     Json(serde_json::Error),
     InvalidField(&'static str),
+    UnsafeRuntimeDirectory,
 }
 
 impl Display for ConfigError {
@@ -282,6 +299,8 @@ impl Display for ConfigError {
             Self::InvalidField(reason) => {
                 write!(formatter, "client configuration is invalid: {reason}")
             }
+            Self::UnsafeRuntimeDirectory => formatter
+                .write_str("client runtime directory must be an absolute private directory"),
         }
     }
 }

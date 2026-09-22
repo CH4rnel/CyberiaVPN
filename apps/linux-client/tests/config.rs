@@ -8,7 +8,7 @@ use cyberia_linux_client::{ConfigError, load_config};
 fn config_json(extra: &str) -> String {
     format!(
         r#"{{
-        "interface":"wg0","endpoint_address":"198.51.100.7","endpoint_port":51820,
+        "interface":"wg0","runtime_directory":"RUNTIME_DIRECTORY","endpoint_address":"198.51.100.7","endpoint_port":51820,
         "peer_public_key_hex":"0101010101010101010101010101010101010101010101010101010101010101",
         "tunnel_addresses":["10.20.0.2/24"],"allowed_ips":["0.0.0.0/0"],
         "dns_resolvers":["192.0.2.53"],"mtu":1420,"persistent_keepalive_seconds":25,
@@ -26,6 +26,7 @@ fn private_file(name: &str, contents: &str) -> std::path::PathBuf {
     ));
     let _ = fs::remove_dir_all(&directory);
     fs::create_dir(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
     let path = directory.join("client.json");
     fs::write(&path, contents).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
@@ -34,7 +35,12 @@ fn private_file(name: &str, contents: &str) -> std::path::PathBuf {
 
 #[test]
 fn loads_a_private_bounded_configuration() {
-    let path = private_file("valid", &config_json(""));
+    let path = private_file("valid", "");
+    let contents = config_json("").replace(
+        "RUNTIME_DIRECTORY",
+        path.parent().unwrap().to_str().unwrap(),
+    );
+    fs::write(&path, contents).unwrap();
     let config = load_config(&path).unwrap();
     assert_eq!(config.interface, "wg0");
     assert_eq!(config.endpoint_port, 51820);
@@ -43,7 +49,12 @@ fn loads_a_private_bounded_configuration() {
 
 #[test]
 fn rejects_broad_permissions_and_symbolic_links() {
-    let path = private_file("metadata", &config_json(""));
+    let path = private_file("metadata", "");
+    let contents = config_json("").replace(
+        "RUNTIME_DIRECTORY",
+        path.parent().unwrap().to_str().unwrap(),
+    );
+    fs::write(&path, contents).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
     assert!(matches!(load_config(&path), Err(ConfigError::UnsafeFile)));
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
@@ -54,12 +65,32 @@ fn rejects_broad_permissions_and_symbolic_links() {
 }
 
 #[test]
+fn rejects_unsafe_runtime_directory() {
+    let path = private_file("runtime", "");
+    let runtime = path.parent().unwrap();
+    let contents = config_json("").replace("RUNTIME_DIRECTORY", runtime.to_str().unwrap());
+    fs::write(&path, contents).unwrap();
+    fs::set_permissions(runtime, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(matches!(
+        load_config(&path),
+        Err(ConfigError::UnsafeRuntimeDirectory)
+    ));
+    fs::remove_dir_all(runtime).unwrap();
+}
+
+#[test]
 fn rejects_unknown_fields_and_trailing_documents() {
     for (name, contents) in [
         ("unknown", config_json(",\"unexpected\":true")),
         ("trailing", format!("{} {{}}", config_json(""))),
     ] {
-        let path = private_file(name, &contents);
+        let path = private_file(name, "");
+        let contents = contents.replace(
+            "RUNTIME_DIRECTORY",
+            path.parent().unwrap().to_str().unwrap(),
+        );
+        fs::write(&path, contents).unwrap();
         assert!(matches!(load_config(&path), Err(ConfigError::Json(_))));
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }

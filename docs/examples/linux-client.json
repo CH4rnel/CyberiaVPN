@@ -1,5 +1,6 @@
 {
   "interface": "wg0",
+  "runtime_directory": "/run/cyberia",
   "endpoint_address": "198.51.100.7",
   "endpoint_port": 51820,
   "peer_public_key_hex": "0101010101010101010101010101010101010101010101010101010101010101",

@@ -8,6 +8,7 @@ use cyberia_linux_client::{ClientConfig, ClientTools, ConfigError};
 fn config() -> ClientConfig {
     ClientConfig {
         interface: "wg0".into(),
+        runtime_directory: PathBuf::from("/run/cyberia"),
         endpoint_address: "198.51.100.7".parse().unwrap(),
         endpoint_port: 51820,
         peer_public_key_hex: "01".repeat(32),
