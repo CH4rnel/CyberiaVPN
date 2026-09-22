@@ -85,6 +85,7 @@ node_public_key_hex="$(base64 -d <"$work_directory/node.pub" | od -An -tx1 | tr 
 cat >"$client_config" <<EOF
 {
   "interface": "$client_tunnel",
+  "runtime_directory": "$work_directory",
   "endpoint_address": "192.0.2.1",
   "endpoint_port": 51820,
   "peer_public_key_hex": "$node_public_key_hex",

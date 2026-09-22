@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use cyberia_killswitch::linux_connection::LinuxWireGuardConnection;
-use cyberia_linux_client::{load_config, run_until_shutdown};
+use cyberia_linux_client::{acquire_interface_lease, load_config, run_until_shutdown};
 use cyberia_transport::CancellationToken;
 
 fn main() {
@@ -25,6 +25,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let config = load_config(&config_path)?;
+    let _lease = acquire_interface_lease(&config.runtime_directory, &config.interface)?;
     let nft_executable = config.tools.nft.clone();
     let always_on = config.always_on;
     let settings = config.into_connection_settings()?;

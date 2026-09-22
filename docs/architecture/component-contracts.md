@@ -163,6 +163,11 @@ attached until SIGINT or SIGTERM. Non-always-on sessions remove filtering only
 after protected teardown; always-on sessions retain blocking on exit or failed
 connection. The example configuration contains documentation-only addresses and
 keys and must not be deployed unchanged.
+The client configuration also declares a private, operator-controlled runtime
+directory. Before platform state changes, the executable obtains a nonblocking
+exclusive file lock derived from the validated interface name. A concurrent
+client cannot manage the same interface, while a lock is released automatically
+when its owning process exits.
 Before M1 can claim a working VPN tunnel, the complete path must run with least
 privilege inside an isolated Linux network namespace and demonstrate cleanup on
 failure.
