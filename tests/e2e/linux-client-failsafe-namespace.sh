@@ -110,7 +110,7 @@ chmod 600 "$client_config"
 
 ip netns exec "$client_namespace" "$client_binary" "$client_config" &
 client_pid="$!"
-wait_for_link "$client_namespace" "$client_tunnel"
+wait_for_process_link "$client_namespace" "$client_tunnel" "$client_pid"
 
 attempts=30
 while ! ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null; do

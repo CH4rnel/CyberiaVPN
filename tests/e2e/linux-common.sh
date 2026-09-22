@@ -40,6 +40,28 @@ wait_for_link() {
     return 1
 }
 
+wait_for_process_link() {
+    local namespace="$1"
+    local interface="$2"
+    local process_id="$3"
+    local attempts=50
+    while (( attempts > 0 )); do
+        if ip -n "$namespace" link show dev "$interface" >/dev/null 2>&1; then
+            return 0
+        fi
+        if ! kill -0 "$process_id" >/dev/null 2>&1; then
+            printf 'Process %s exited before interface %s appeared in namespace %s\n' \
+                "$process_id" "$interface" "$namespace" >&2
+            return 1
+        fi
+        attempts=$((attempts - 1))
+        sleep 0.1
+    done
+    printf 'Timed out waiting for interface %s from process %s in namespace %s\n' \
+        "$interface" "$process_id" "$namespace" >&2
+    return 1
+}
+
 assert_command_fails() {
     if "$@"; then
         printf 'Command unexpectedly succeeded: %q ' "$@" >&2
