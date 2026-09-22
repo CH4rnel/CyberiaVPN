@@ -132,6 +132,23 @@ grep -q 'another client already manages this interface' "$contender_log"
 kill -0 "$client_pid"
 ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null
 
+kill -TERM "$client_pid"
+if ! wait "$client_pid"; then
+    printf '%s\n' 'Client failed to complete graceful teardown' >&2
+    exit 1
+fi
+client_pid=""
+assert_command_fails ip -n "$client_namespace" link show dev "$client_tunnel"
+if ip netns exec "$client_namespace" nft list table inet cyberia_vpn >/dev/null 2>&1; then
+    printf '%s\n' 'Client retained filtering after graceful non-always-on teardown' >&2
+    exit 1
+fi
+
+ip netns exec "$client_namespace" "$client_binary" "$client_config" &
+client_pid="$!"
+wait_for_process_link "$client_namespace" "$client_tunnel" "$client_pid"
+ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null
+
 ip -n "$client_namespace" link delete dev "$client_tunnel"
 assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
 

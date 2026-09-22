@@ -40,9 +40,10 @@ then verifies that the client interface was removed.
 `linux-client-failsafe-namespace.sh` launches the compiled Linux client in the
 client namespace with a generated key and a no-op resolver stub. It proves
 tunnel traffic, rejects a competing process for the same managed interface,
-removes the tunnel underneath the original client, verifies that ordinary
-underlay ICMP is blocked, and confirms that a failed teardown retains the
-default-deny nftables policy.
+and verifies that graceful shutdown removes the interface and non-always-on
+firewall policy. It then reconnects, removes the tunnel underneath the client,
+verifies that ordinary underlay ICMP is blocked, and confirms that a failed
+teardown retains the default-deny nftables policy.
 
 On failure, the scenarios preserve the nonzero exit status and print interface,
 address, WireGuard and owned nftables-table state for each namespace. They do
