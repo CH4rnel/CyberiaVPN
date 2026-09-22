@@ -18,15 +18,6 @@ complete tunnel in a privileged end-to-end environment.
 - test-first development for critical logic;
 - observable services without collection of user traffic contents.
 
-## Repository map
-
-The planned top-level layout is described in
-[docs/architecture/overview.md](docs/architecture/overview.md). The delivery
-sequence and acceptance criteria live in [docs/ROADMAP.md](docs/ROADMAP.md).
-Development follows the TDD, XP and SOLID guidance in
-[CONTRIBUTING.md](CONTRIBUTING.md), backed by the project
-[test strategy](docs/testing/strategy.md).
-
 ## Status
 
 The repository includes device proof-of-possession verification, signed public
