@@ -122,6 +122,16 @@ while ! ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null; d
     sleep 0.1
 done
 
+contender_log="$work_directory/contender.log"
+if ip netns exec "$client_namespace" "$client_binary" "$client_config" \
+    >"$contender_log" 2>&1; then
+    printf '%s\n' 'Competing client unexpectedly acquired the interface lease' >&2
+    exit 1
+fi
+grep -q 'another client already manages this interface' "$contender_log"
+kill -0 "$client_pid"
+ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null
+
 ip -n "$client_namespace" link delete dev "$client_tunnel"
 assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
 
