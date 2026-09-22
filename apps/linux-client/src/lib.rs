@@ -16,11 +16,12 @@ use fs2::FileExt;
 use serde::Deserialize;
 
 use cyberia_killswitch::ConnectionError;
-use cyberia_killswitch::linux::NftablesRunner;
+use cyberia_killswitch::linux::{NftablesError, NftablesRunner, SystemNftablesRunner};
 use cyberia_killswitch::linux_connection::{LinuxConnectionSettings, LinuxWireGuardConnection};
 use cyberia_transport::linux::{CommandRunner, LinuxDnsTools, LinuxTools};
 use cyberia_transport::{
-    AllowedIp, CancellationToken, DnsConfig, Endpoint, Session, TunnelAddress, WireGuardConfig,
+    AllowedIp, CancellationToken, DnsConfig, Endpoint, Session, TransportConfig, TransportError,
+    TransportKind, TunnelAddress, WireGuardConfig,
 };
 
 const MAXIMUM_CONFIG_SIZE: u64 = 1024 * 1024;
@@ -262,6 +263,64 @@ impl ClientConfig {
         })
     }
 }
+
+/// Validates every client input that can be checked without network mutation.
+///
+/// # Errors
+///
+/// Returns a typed validation error without creating interfaces, routes or
+/// firewall policy.
+pub fn validate_client_configuration(config: &ClientConfig) -> Result<(), ClientValidationError> {
+    validate_private_directory(&config.runtime_directory).map_err(ClientValidationError::Config)?;
+    let settings = config
+        .clone()
+        .into_connection_settings()
+        .map_err(ClientValidationError::Config)?;
+    settings
+        .profile
+        .validate()
+        .map_err(ClientValidationError::Transport)?;
+    settings
+        .dns
+        .validate()
+        .map_err(ClientValidationError::Transport)?;
+    TransportConfig {
+        kind: TransportKind::WireGuard,
+        endpoint: settings.profile.endpoint.clone(),
+        connect_timeout: settings.connect_timeout,
+    }
+    .validate()
+    .map_err(ClientValidationError::Transport)?;
+    settings
+        .tools
+        .validate()
+        .map_err(ClientValidationError::Transport)?;
+    settings
+        .dns_tools
+        .validate()
+        .map_err(ClientValidationError::Transport)?;
+    SystemNftablesRunner::new(config.tools.nft.clone()).map_err(ClientValidationError::Nftables)?;
+    Ok(())
+}
+
+#[derive(Debug)]
+pub enum ClientValidationError {
+    Config(ConfigError),
+    Transport(TransportError),
+    Nftables(NftablesError),
+}
+
+impl Display for ClientValidationError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Config(error) => error.fmt(formatter),
+            Self::Transport(error) => error.fmt(formatter),
+            Self::Nftables(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for ClientValidationError {}
 
 /// Narrow lifecycle used by the executable and deterministic tests.
 pub trait ManagedClientConnection {

@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use cyberia_killswitch::linux_connection::LinuxWireGuardConnection;
-use cyberia_linux_client::{acquire_interface_lease, load_config, run_until_shutdown};
+use cyberia_linux_client::{
+    acquire_interface_lease, load_config, run_until_shutdown, validate_client_configuration,
+};
 use cyberia_transport::CancellationToken;
 
 fn main() {
@@ -16,16 +18,29 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
     let mut arguments = std::env::args_os();
     let _program = arguments.next();
-    let config_path = arguments
+    let first = arguments
         .next()
-        .map(PathBuf::from)
         .ok_or("usage: cyberia-linux-client /absolute/path/to/client.json")?;
+    let (check_only, config_path) = if first == "--check" {
+        let path = arguments
+            .next()
+            .map(PathBuf::from)
+            .ok_or("usage: cyberia-linux-client --check /absolute/path/to/client.json")?;
+        (true, path)
+    } else {
+        (false, PathBuf::from(first))
+    };
     if arguments.next().is_some() {
-        return Err("usage: cyberia-linux-client /absolute/path/to/client.json".into());
+        return Err("usage: cyberia-linux-client [--check] /absolute/path/to/client.json".into());
     }
 
     let config = load_config(&config_path)?;
     let _lease = acquire_interface_lease(&config.runtime_directory, &config.interface)?;
+    if check_only {
+        validate_client_configuration(&config)?;
+        println!("cyberia-linux-client: configuration is valid");
+        return Ok(());
+    }
     let nft_executable = config.tools.nft.clone();
     let always_on = config.always_on;
     let settings = config.into_connection_settings()?;

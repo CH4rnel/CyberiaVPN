@@ -60,6 +60,12 @@ The configuration's `runtime_directory` must already exist, be absolute and
 have permissions no broader than `0700`. The client holds an exclusive lock in
 that directory for its configured interface until shutdown.
 
+Validate the complete local client configuration without changing network state:
+
+```sh
+cargo run -p cyberia-linux-client -- --check /absolute/private/client.json
+```
+
 Start the development API in another terminal:
 
 ```sh
