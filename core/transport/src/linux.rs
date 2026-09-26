@@ -489,6 +489,7 @@ impl<R: CommandRunner> LinuxDnsBackend<R> {
         })();
         if let Err(setup_error) = setup_result {
             if let Err(cleanup_error) = self.command(vec!["revert".into(), interface.into()]) {
+                self.active_interface = Some(interface.into());
                 return Err(TransportError::Network(format!(
                     "DNS setup failed: {setup_error}; cleanup failed: {cleanup_error}"
                 )));
@@ -497,6 +498,11 @@ impl<R: CommandRunner> LinuxDnsBackend<R> {
         }
         self.active_interface = Some(interface.into());
         Ok(())
+    }
+
+    /// Reports whether resolver state may still require an explicit revert.
+    pub fn needs_revert(&self) -> bool {
+        self.active_interface.is_some()
     }
 
     /// Reverts all DNS state owned by the active interface.

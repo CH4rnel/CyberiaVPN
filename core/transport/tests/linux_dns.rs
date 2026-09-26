@@ -11,14 +11,14 @@ use cyberia_transport::{CancellationToken, ConnectContext, DnsConfig, TransportE
 
 struct Recorder {
     commands: Arc<Mutex<Vec<CommandSpec>>>,
-    fail_at: Option<usize>,
+    fail_at: Vec<usize>,
 }
 
 impl CommandRunner for Recorder {
     fn run(&mut self, command: &CommandSpec) -> Result<(), TransportError> {
         let mut commands = self.commands.lock().unwrap();
         commands.push(command.clone());
-        if self.fail_at == Some(commands.len()) {
+        if self.fail_at.contains(&commands.len()) {
             return Err(TransportError::Network("injected".into()));
         }
         Ok(())
@@ -59,7 +59,7 @@ fn configures_and_reverts_per_interface_dns() {
         tools,
         Recorder {
             commands: Arc::clone(&commands),
-            fail_at: None,
+            fail_at: vec![],
         },
     )
     .unwrap();
@@ -86,7 +86,7 @@ fn partial_dns_setup_is_reverted() {
         tools,
         Recorder {
             commands: Arc::clone(&commands),
-            fail_at: Some(2),
+            fail_at: vec![2],
         },
     )
     .unwrap();
@@ -107,7 +107,7 @@ fn initial_dns_command_failure_is_reverted() {
         tools,
         Recorder {
             commands: Arc::clone(&commands),
-            fail_at: Some(1),
+            fail_at: vec![1],
         },
     )
     .unwrap();
@@ -121,6 +121,39 @@ fn initial_dns_command_failure_is_reverted() {
 }
 
 #[test]
+fn failed_dns_cleanup_remains_retryable() {
+    for (name, failures) in [
+        ("initial-cleanup-failure", vec![1, 2]),
+        ("partial-cleanup-failure", vec![2, 3]),
+    ] {
+        let (tools, directory) = tools(name);
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let mut backend = LinuxDnsBackend::new(
+            tools,
+            Recorder {
+                commands: Arc::clone(&commands),
+                fail_at: failures,
+            },
+        )
+        .unwrap();
+
+        assert!(backend.configure("wg0", &config(), &context()).is_err());
+        assert!(backend.needs_revert());
+        assert!(matches!(
+            backend.configure("wg0", &config(), &context()),
+            Err(TransportError::AlreadyConnected)
+        ));
+        backend.revert("wg0").unwrap();
+        assert!(!backend.needs_revert());
+        assert_eq!(
+            commands.lock().unwrap().last().unwrap().arguments,
+            ["revert", "wg0"]
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
 fn rejects_invalid_policy_before_platform_work() {
     let (tools, directory) = tools("invalid");
     let commands = Arc::new(Mutex::new(Vec::new()));
@@ -128,7 +161,7 @@ fn rejects_invalid_policy_before_platform_work() {
         tools,
         Recorder {
             commands: Arc::clone(&commands),
-            fail_at: None,
+            fail_at: vec![],
         },
     )
     .unwrap();
