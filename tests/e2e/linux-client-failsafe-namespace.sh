@@ -121,6 +121,8 @@ while ! ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null; d
     fi
     sleep 0.1
 done
+ip netns exec "$client_namespace" nft list table inet cyberia_vpn | grep -q 'policy drop'
+assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
 
 contender_log="$work_directory/contender.log"
 if ip netns exec "$client_namespace" "$client_binary" "$client_config" \

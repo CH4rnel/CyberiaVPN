@@ -39,7 +39,8 @@ then verifies that the client interface was removed.
 
 `linux-client-failsafe-namespace.sh` launches the compiled Linux client in the
 client namespace with a generated key and a no-op resolver stub. It proves
-tunnel traffic, rejects a competing process for the same managed interface,
+tunnel traffic while nftables blocks ordinary underlay ICMP, rejects a competing
+process for the same managed interface,
 and verifies that graceful shutdown removes the interface and non-always-on
 firewall policy. It then reconnects, removes the tunnel underneath the client,
 verifies that ordinary underlay ICMP is blocked, and confirms that a failed
