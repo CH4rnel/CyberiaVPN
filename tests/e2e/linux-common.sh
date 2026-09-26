@@ -46,13 +46,13 @@ wait_for_process_link() {
     local process_id="$3"
     local attempts=50
     while (( attempts > 0 )); do
-        if ip -n "$namespace" link show dev "$interface" >/dev/null 2>&1; then
-            return 0
-        fi
         if ! kill -0 "$process_id" >/dev/null 2>&1; then
             printf 'Process %s exited before interface %s appeared in namespace %s\n' \
                 "$process_id" "$interface" "$namespace" >&2
             return 1
+        fi
+        if ip -n "$namespace" link show dev "$interface" >/dev/null 2>&1; then
+            return 0
         fi
         attempts=$((attempts - 1))
         sleep 0.1

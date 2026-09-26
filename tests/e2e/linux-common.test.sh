@@ -19,3 +19,8 @@ fi
     ip() { return 1; }
     assert_command_fails wait_for_process_link test-namespace wg0 99999999
 )
+
+(
+    ip() { return 0; }
+    assert_command_fails wait_for_process_link test-namespace wg0 99999999
+)
