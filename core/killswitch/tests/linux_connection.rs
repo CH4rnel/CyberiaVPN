@@ -49,14 +49,14 @@ struct FailingFirewallRules {
 
 struct FailingDns {
     commands: Arc<Mutex<Vec<CommandSpec>>>,
-    fail_at: usize,
+    fail_at: Vec<usize>,
 }
 
 impl CommandRunner for FailingDns {
     fn run(&mut self, command: &CommandSpec) -> Result<(), TransportError> {
         let mut commands = self.commands.lock().unwrap();
         commands.push(command.clone());
-        if commands.len() == self.fail_at {
+        if self.fail_at.contains(&commands.len()) {
             return Err(TransportError::Network("DNS failure".into()));
         }
         Ok(())
@@ -294,7 +294,7 @@ fn dns_failure_restores_blocking_and_tears_down_the_tunnel() {
         },
         FailingDns {
             commands: Arc::clone(&dns_commands),
-            fail_at: 2,
+            fail_at: vec![2],
         },
         FirewallRules {
             recorded: Arc::clone(&rules),
@@ -325,6 +325,89 @@ fn dns_failure_restores_blocking_and_tears_down_the_tunnel() {
 }
 
 #[test]
+fn dns_cleanup_retry_succeeds_before_tunnel_teardown() {
+    let (settings, directory) = settings("dns-cleanup-retry", "198.51.100.7");
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let dns_commands = Arc::new(Mutex::new(Vec::new()));
+    let rules = Arc::new(Mutex::new(Vec::new()));
+    let mut connection = LinuxWireGuardConnection::with_runners(
+        settings,
+        Commands {
+            recorded: Arc::clone(&commands),
+        },
+        FailingDns {
+            commands: Arc::clone(&dns_commands),
+            fail_at: vec![2, 3],
+        },
+        FirewallRules {
+            recorded: Arc::clone(&rules),
+        },
+    )
+    .unwrap();
+
+    assert!(connection.connect(CancellationToken::default()).is_err());
+    assert_eq!(connection.policy(), &TrafficPolicy::BlockNonTunnel);
+    let dns_commands = dns_commands.lock().unwrap();
+    assert_eq!(dns_commands[2].arguments, ["revert", "wg0"]);
+    assert_eq!(dns_commands[3].arguments, ["revert", "wg0"]);
+    assert_eq!(
+        commands.lock().unwrap().last().unwrap().arguments,
+        ["link", "delete", "dev", "wg0"]
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn repeated_dns_cleanup_failure_retains_protected_tunnel() {
+    let (settings, directory) = settings("dns-cleanup-stuck", "198.51.100.7");
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let dns_commands = Arc::new(Mutex::new(Vec::new()));
+    let rules = Arc::new(Mutex::new(Vec::new()));
+    let mut connection = LinuxWireGuardConnection::with_runners(
+        settings,
+        Commands {
+            recorded: Arc::clone(&commands),
+        },
+        FailingDns {
+            commands: Arc::clone(&dns_commands),
+            fail_at: vec![2, 3, 4],
+        },
+        FirewallRules {
+            recorded: Arc::clone(&rules),
+        },
+    )
+    .unwrap();
+
+    assert!(connection.connect(CancellationToken::default()).is_err());
+    assert_eq!(
+        connection.policy(),
+        &TrafficPolicy::TunnelOnly {
+            interface: "wg0".into()
+        }
+    );
+    assert!(connection.disable().is_err());
+    assert_eq!(dns_commands.lock().unwrap()[3].arguments, ["revert", "wg0"]);
+    assert!(
+        !commands
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|command| command.arguments == ["link", "delete", "dev", "wg0"])
+    );
+    assert!(
+        rules
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .contains("oifname \"wg0\" accept")
+    );
+    connection.disconnect().unwrap();
+    connection.disable().unwrap();
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn dns_revert_failure_keeps_the_tunnel_and_tunnel_only_policy() {
     let (settings, directory) = settings("dns-revert-failure", "198.51.100.7");
     let commands = Arc::new(Mutex::new(Vec::new()));
@@ -337,7 +420,7 @@ fn dns_revert_failure_keeps_the_tunnel_and_tunnel_only_policy() {
         },
         FailingDns {
             commands: Arc::clone(&dns_commands),
-            fail_at: 4,
+            fail_at: vec![4],
         },
         FirewallRules {
             recorded: Arc::clone(&rules),

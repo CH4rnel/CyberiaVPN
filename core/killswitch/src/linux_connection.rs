@@ -113,6 +113,15 @@ impl<C: CommandRunner, D: CommandRunner, N: NftablesRunner> LinuxWireGuardConnec
             .dns
             .configure(&self.interface, &self.dns_config, &context)
         {
+            if self.dns.needs_revert() {
+                if let Err(cleanup_error) = self.dns.revert(&self.interface) {
+                    return Err(ConnectionError::Transport(TransportError::Network(
+                        format!(
+                            "DNS setup failed: {dns_error}; cleanup retry failed: {cleanup_error}"
+                        ),
+                    )));
+                }
+            }
             return match self.controller.disconnect() {
                 Ok(()) => Err(ConnectionError::Transport(dns_error)),
                 Err(cleanup_error) => Err(ConnectionError::Transport(TransportError::Network(
