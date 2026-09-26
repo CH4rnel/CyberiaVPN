@@ -145,6 +145,7 @@ if ip netns exec "$client_namespace" nft list table inet cyberia_vpn >/dev/null 
     printf '%s\n' 'Client retained filtering after graceful non-always-on teardown' >&2
     exit 1
 fi
+ip netns exec "$client_namespace" ping -c 1 -W 2 192.0.2.1 >/dev/null
 
 ip netns exec "$client_namespace" "$client_binary" "$client_config" &
 client_pid="$!"
