@@ -170,7 +170,10 @@ if wait "$client_pid"; then
     exit 1
 fi
 client_pid=""
+ip -n "$client_namespace" link show dev "$client_tunnel" >/dev/null
 ip netns exec "$client_namespace" nft list table inet cyberia_vpn | grep -q 'policy drop'
+assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
+ip -n "$client_namespace" link delete dev "$client_tunnel"
 assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
 
 always_on_config="$work_directory/client-always-on.json"
