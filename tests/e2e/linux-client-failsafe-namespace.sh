@@ -160,4 +160,17 @@ fi
 client_pid=""
 ip netns exec "$client_namespace" nft list table inet cyberia_vpn | grep -q 'policy drop'
 
+ip netns exec "$client_namespace" "$client_binary" "$client_config" &
+client_pid="$!"
+wait_for_process_link "$client_namespace" "$client_tunnel" "$client_pid"
+ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null
+kill -KILL "$client_pid"
+if wait "$client_pid"; then
+    printf '%s\n' 'Client unexpectedly survived forced termination' >&2
+    exit 1
+fi
+client_pid=""
+ip netns exec "$client_namespace" nft list table inet cyberia_vpn | grep -q 'policy drop'
+assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
+
 printf '%s\n' 'Linux client fail-safe namespace scenario passed'
