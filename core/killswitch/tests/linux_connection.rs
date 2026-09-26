@@ -43,6 +43,10 @@ struct FirewallRules {
     recorded: Arc<Mutex<Vec<String>>>,
 }
 
+struct FailingFirewallRules {
+    recorded: Arc<Mutex<Vec<String>>>,
+}
+
 struct FailingDns {
     commands: Arc<Mutex<Vec<CommandSpec>>>,
     fail_at: usize,
@@ -63,6 +67,13 @@ impl NftablesRunner for FirewallRules {
     fn apply(&mut self, rules: &str) -> Result<(), NftablesError> {
         self.recorded.lock().unwrap().push(rules.into());
         Ok(())
+    }
+}
+
+impl NftablesRunner for FailingFirewallRules {
+    fn apply(&mut self, rules: &str) -> Result<(), NftablesError> {
+        self.recorded.lock().unwrap().push(rules.into());
+        Err(NftablesError::Command("injected firewall failure".into()))
     }
 }
 
@@ -237,6 +248,31 @@ fn rejects_a_zero_timeout_before_applying_any_platform_state() {
     ));
     assert!(commands.lock().unwrap().is_empty());
     assert!(rules.lock().unwrap().is_empty());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn refuses_to_build_when_initial_firewall_policy_cannot_be_applied() {
+    let (settings, directory) = settings("initial-firewall-failure", "198.51.100.7");
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let rules = Arc::new(Mutex::new(Vec::new()));
+
+    let result = LinuxWireGuardConnection::with_runners(
+        settings,
+        Commands {
+            recorded: Arc::clone(&commands),
+        },
+        Commands {
+            recorded: Arc::clone(&commands),
+        },
+        FailingFirewallRules {
+            recorded: Arc::clone(&rules),
+        },
+    );
+
+    assert!(matches!(result, Err(LinuxConnectionBuildError::Firewall(_))));
+    assert!(commands.lock().unwrap().is_empty());
+    assert_eq!(rules.lock().unwrap().len(), 1);
     fs::remove_dir_all(directory).unwrap();
 }
 
