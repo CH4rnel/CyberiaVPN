@@ -270,7 +270,10 @@ fn refuses_to_build_when_initial_firewall_policy_cannot_be_applied() {
         },
     );
 
-    assert!(matches!(result, Err(LinuxConnectionBuildError::Firewall(_))));
+    assert!(matches!(
+        result,
+        Err(LinuxConnectionBuildError::Firewall(_))
+    ));
     assert!(commands.lock().unwrap().is_empty());
     assert_eq!(rules.lock().unwrap().len(), 1);
     fs::remove_dir_all(directory).unwrap();
@@ -349,13 +352,57 @@ fn dns_revert_failure_keeps_the_tunnel_and_tunnel_only_policy() {
             interface: "wg0".into()
         }
     );
-    assert!(!commands.lock().unwrap().iter().any(|command| {
-        command.arguments == ["link", "delete", "dev", "wg0"]
-    }));
+    assert!(
+        !commands
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|command| { command.arguments == ["link", "delete", "dev", "wg0"] })
+    );
     assert_eq!(
         dns_commands.lock().unwrap().last().unwrap().arguments,
         ["revert", "wg0"]
     );
-    assert!(rules.lock().unwrap().last().unwrap().contains("oifname \"wg0\" accept"));
+    assert!(
+        rules
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .contains("oifname \"wg0\" accept")
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn always_on_firewall_stays_blocking_before_and_after_connection() {
+    let (mut settings, directory) = settings("always-on", "198.51.100.7");
+    settings.always_on = true;
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let rules = Arc::new(Mutex::new(Vec::new()));
+    let mut connection = LinuxWireGuardConnection::with_runners(
+        settings,
+        Commands {
+            recorded: Arc::clone(&commands),
+        },
+        Commands {
+            recorded: Arc::clone(&commands),
+        },
+        FirewallRules {
+            recorded: Arc::clone(&rules),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(connection.policy(), &TrafficPolicy::BlockNonTunnel);
+    connection.connect(CancellationToken::default()).unwrap();
+    connection.disconnect().unwrap();
+    assert!(connection.disable().is_err());
+
+    assert_eq!(connection.policy(), &TrafficPolicy::BlockNonTunnel);
+    let applied_rules = rules.lock().unwrap();
+    assert!(applied_rules.first().unwrap().contains("policy drop"));
+    assert!(applied_rules.last().unwrap().contains("policy drop"));
+    drop(applied_rules);
     fs::remove_dir_all(directory).unwrap();
 }
