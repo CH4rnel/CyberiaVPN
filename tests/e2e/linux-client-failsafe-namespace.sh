@@ -173,4 +173,21 @@ client_pid=""
 ip netns exec "$client_namespace" nft list table inet cyberia_vpn | grep -q 'policy drop'
 assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
 
+always_on_config="$work_directory/client-always-on.json"
+sed 's/"always_on": false/"always_on": true/' "$client_config" >"$always_on_config"
+chmod 600 "$always_on_config"
+ip netns exec "$client_namespace" "$client_binary" "$always_on_config" &
+client_pid="$!"
+wait_for_process_link "$client_namespace" "$client_tunnel" "$client_pid"
+ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null
+kill -TERM "$client_pid"
+if ! wait "$client_pid"; then
+    printf '%s\n' 'Always-on client failed to complete graceful teardown' >&2
+    exit 1
+fi
+client_pid=""
+assert_command_fails ip -n "$client_namespace" link show dev "$client_tunnel"
+ip netns exec "$client_namespace" nft list table inet cyberia_vpn | grep -q 'policy drop'
+assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
+
 printf '%s\n' 'Linux client fail-safe namespace scenario passed'
