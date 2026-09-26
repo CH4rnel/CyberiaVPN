@@ -318,3 +318,44 @@ fn dns_failure_restores_blocking_and_tears_down_the_tunnel() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn dns_revert_failure_keeps_the_tunnel_and_tunnel_only_policy() {
+    let (settings, directory) = settings("dns-revert-failure", "198.51.100.7");
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let dns_commands = Arc::new(Mutex::new(Vec::new()));
+    let rules = Arc::new(Mutex::new(Vec::new()));
+    let mut connection = LinuxWireGuardConnection::with_runners(
+        settings,
+        Commands {
+            recorded: Arc::clone(&commands),
+        },
+        FailingDns {
+            commands: Arc::clone(&dns_commands),
+            fail_at: 4,
+        },
+        FirewallRules {
+            recorded: Arc::clone(&rules),
+        },
+    )
+    .unwrap();
+
+    connection.connect(CancellationToken::default()).unwrap();
+    assert!(connection.disconnect().is_err());
+
+    assert_eq!(
+        connection.policy(),
+        &TrafficPolicy::TunnelOnly {
+            interface: "wg0".into()
+        }
+    );
+    assert!(!commands.lock().unwrap().iter().any(|command| {
+        command.arguments == ["link", "delete", "dev", "wg0"]
+    }));
+    assert_eq!(
+        dns_commands.lock().unwrap().last().unwrap().arguments,
+        ["revert", "wg0"]
+    );
+    assert!(rules.lock().unwrap().last().unwrap().contains("oifname \"wg0\" accept"));
+    fs::remove_dir_all(directory).unwrap();
+}
