@@ -150,6 +150,7 @@ fn composes_firewall_transport_routes_health_and_teardown() {
     )
     .unwrap();
 
+    assert_eq!(connection.policy(), &TrafficPolicy::BlockNonTunnel);
     connection.connect(CancellationToken::default()).unwrap();
     assert_eq!(
         connection.policy(),
@@ -163,7 +164,7 @@ fn composes_firewall_transport_routes_health_and_teardown() {
 
     let rules = rules.lock().unwrap();
     assert_eq!(rules.len(), 5);
-    assert!(!rules[0].contains("policy drop"));
+    assert!(rules[0].contains("policy drop"));
     assert!(rules[1].contains("policy drop"));
     assert!(rules[2].contains("oifname \"wg0\" accept"));
     assert!(rules[3].contains("policy drop"));
@@ -276,6 +277,7 @@ fn refuses_to_build_when_initial_firewall_policy_cannot_be_applied() {
     ));
     assert!(commands.lock().unwrap().is_empty());
     assert_eq!(rules.lock().unwrap().len(), 1);
+    assert!(rules.lock().unwrap()[0].contains("policy drop"));
     fs::remove_dir_all(directory).unwrap();
 }
 

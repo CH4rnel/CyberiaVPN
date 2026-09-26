@@ -84,8 +84,9 @@ impl<C: CommandRunner, D: CommandRunner, N: NftablesRunner> LinuxWireGuardConnec
             },
             nftables_runner,
         );
-        let controller =
-            ConnectionController::new(KillSwitch::new(settings.always_on), adapter, firewall)?;
+        let mut kill_switch = KillSwitch::new(settings.always_on);
+        kill_switch.enable();
+        let controller = ConnectionController::new(kill_switch, adapter, firewall)?;
         Ok(Self {
             controller,
             dns,
