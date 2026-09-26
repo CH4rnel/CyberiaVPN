@@ -131,6 +131,7 @@ impl NftablesConfig {
     pub fn render(&self, policy: &TrafficPolicy) -> Result<String, NftablesError> {
         let mut rules = format!("add table inet {TABLE_NAME}\nflush table inet {TABLE_NAME}\n");
         if policy == &TrafficPolicy::Disabled {
+            rules.push_str(&format!("delete table inet {TABLE_NAME}\n"));
             return Ok(rules);
         }
 

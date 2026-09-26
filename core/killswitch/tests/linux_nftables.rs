@@ -60,12 +60,12 @@ fn tunnel_policy_allows_the_validated_tunnel_interface() {
 }
 
 #[test]
-fn disabled_policy_leaves_the_owned_table_empty() {
+fn disabled_policy_removes_the_owned_table() {
     assert_eq!(
         config(IpAddr::V4(Ipv4Addr::LOCALHOST))
             .render(&TrafficPolicy::Disabled)
             .unwrap(),
-        "add table inet cyberia_vpn\nflush table inet cyberia_vpn\n"
+        "add table inet cyberia_vpn\nflush table inet cyberia_vpn\ndelete table inet cyberia_vpn\n"
     );
 }
 
