@@ -35,14 +35,14 @@ fn config(address: IpAddr) -> NftablesConfig {
 }
 
 #[test]
-fn blocking_policy_allows_only_loopback_existing_flows_and_peer() {
+fn blocking_policy_allows_only_loopback_and_peer() {
     let rules = config(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)))
         .render(&TrafficPolicy::BlockNonTunnel)
         .unwrap();
 
     assert!(rules.contains("policy drop"));
     assert!(rules.contains("oifname \"lo\" accept"));
-    assert!(rules.contains("ct state established,related accept"));
+    assert!(!rules.contains("ct state established,related accept"));
     assert!(rules.contains("ip daddr 198.51.100.7 udp dport 51820 accept"));
     assert!(!rules.contains("oifname \"wg0\""));
 }

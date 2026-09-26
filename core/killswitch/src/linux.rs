@@ -140,9 +140,6 @@ impl NftablesConfig {
         rules.push_str(&format!(
             "add rule inet {TABLE_NAME} output oifname \"lo\" accept\n"
         ));
-        rules.push_str(&format!(
-            "add rule inet {TABLE_NAME} output ct state established,related accept\n"
-        ));
         let address_family = if self.endpoint_address.is_ipv4() {
             "ip"
         } else {
