@@ -100,6 +100,27 @@ fn partial_dns_setup_is_reverted() {
 }
 
 #[test]
+fn initial_dns_command_failure_is_reverted() {
+    let (tools, directory) = tools("initial-failure");
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = LinuxDnsBackend::new(
+        tools,
+        Recorder {
+            commands: Arc::clone(&commands),
+            fail_at: Some(1),
+        },
+    )
+    .unwrap();
+
+    assert!(backend.configure("wg0", &config(), &context()).is_err());
+    let commands = commands.lock().unwrap();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].arguments[0], "dns");
+    assert_eq!(commands[1].arguments, ["revert", "wg0"]);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn rejects_invalid_policy_before_platform_work() {
     let (tools, directory) = tools("invalid");
     let commands = Arc::new(Mutex::new(Vec::new()));

@@ -480,9 +480,8 @@ impl<R: CommandRunner> LinuxDnsBackend<R> {
         context.check()?;
         let mut arguments = vec!["dns".into(), interface.into()];
         arguments.extend(config.resolvers.iter().map(ToString::to_string));
-        self.command(arguments)?;
-
         let setup_result = (|| {
+            self.command(arguments)?;
             context.check()?;
             self.command(vec!["domain".into(), interface.into(), "~.".into()])?;
             context.check()?;
