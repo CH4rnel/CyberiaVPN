@@ -155,7 +155,7 @@ pub struct ConnectionController<T, F> {
     kill_switch: KillSwitch,
     transport: T,
     firewall: F,
-    transport_active: bool,
+    transport_may_be_active: bool,
 }
 
 impl<T: Transport, F: Firewall> ConnectionController<T, F> {
@@ -175,7 +175,7 @@ impl<T: Transport, F: Firewall> ConnectionController<T, F> {
             kill_switch,
             transport,
             firewall,
-            transport_active: false,
+            transport_may_be_active: false,
         })
     }
 
@@ -208,21 +208,22 @@ impl<T: Transport, F: Firewall> ConnectionController<T, F> {
             .apply(blocking.policy())
             .map_err(ConnectionError::Firewall)?;
         self.kill_switch = blocking;
+        // A failed connect may leave partial platform state behind.
+        self.transport_may_be_active = true;
         let session = self
             .transport
             .connect(config, context)
             .map_err(ConnectionError::Transport)?;
-        self.transport_active = true;
         let mut tunnel = self.kill_switch.clone();
         if let Err(error) = tunnel.tunnel_established(&session.id) {
             if self.transport.disconnect().is_ok() {
-                self.transport_active = false;
+                self.transport_may_be_active = false;
             }
             return Err(ConnectionError::KillSwitch(error));
         }
         if let Err(error) = self.firewall.apply(tunnel.policy()) {
             if self.transport.disconnect().is_ok() {
-                self.transport_active = false;
+                self.transport_may_be_active = false;
             }
             return Err(ConnectionError::Firewall(error));
         }
@@ -246,7 +247,7 @@ impl<T: Transport, F: Firewall> ConnectionController<T, F> {
         self.transport
             .disconnect()
             .map_err(ConnectionError::Transport)?;
-        self.transport_active = false;
+        self.transport_may_be_active = false;
         Ok(())
     }
 
@@ -257,7 +258,7 @@ impl<T: Transport, F: Firewall> ConnectionController<T, F> {
     /// Returns a state-machine or firewall error without changing the effective
     /// policy.
     pub fn disable(&mut self) -> Result<(), ConnectionError> {
-        if self.transport_active {
+        if self.transport_may_be_active {
             return Err(ConnectionError::KillSwitch(
                 KillSwitchError::TransportActive,
             ));

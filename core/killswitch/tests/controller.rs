@@ -124,6 +124,7 @@ fn controller_stays_blocking_after_connect_or_teardown_failure() {
     .unwrap();
     assert!(failed_connect.connect(&config(), &context()).is_err());
     assert_eq!(failed_connect.policy(), &TrafficPolicy::BlockNonTunnel);
+    assert!(failed_connect.disable().is_err());
     let mut failed_disconnect = ConnectionController::new(
         KillSwitch::new(false),
         Fake {
