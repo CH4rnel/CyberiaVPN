@@ -100,6 +100,7 @@ pub enum KillSwitchError {
     AlwaysOn,
     NotEnabled,
     InvalidInterface,
+    TransportActive,
 }
 
 impl Display for KillSwitchError {
@@ -108,6 +109,7 @@ impl Display for KillSwitchError {
             Self::AlwaysOn => formatter.write_str("always-on kill switch cannot be disabled"),
             Self::NotEnabled => formatter.write_str("kill switch is not enabled"),
             Self::InvalidInterface => formatter.write_str("invalid tunnel interface name"),
+            Self::TransportActive => formatter.write_str("transport teardown is not complete"),
         }
     }
 }
@@ -153,6 +155,7 @@ pub struct ConnectionController<T, F> {
     kill_switch: KillSwitch,
     transport: T,
     firewall: F,
+    transport_active: bool,
 }
 
 impl<T: Transport, F: Firewall> ConnectionController<T, F> {
@@ -172,6 +175,7 @@ impl<T: Transport, F: Firewall> ConnectionController<T, F> {
             kill_switch,
             transport,
             firewall,
+            transport_active: false,
         })
     }
 
@@ -208,13 +212,18 @@ impl<T: Transport, F: Firewall> ConnectionController<T, F> {
             .transport
             .connect(config, context)
             .map_err(ConnectionError::Transport)?;
+        self.transport_active = true;
         let mut tunnel = self.kill_switch.clone();
         if let Err(error) = tunnel.tunnel_established(&session.id) {
-            let _ = self.transport.disconnect();
+            if self.transport.disconnect().is_ok() {
+                self.transport_active = false;
+            }
             return Err(ConnectionError::KillSwitch(error));
         }
         if let Err(error) = self.firewall.apply(tunnel.policy()) {
-            let _ = self.transport.disconnect();
+            if self.transport.disconnect().is_ok() {
+                self.transport_active = false;
+            }
             return Err(ConnectionError::Firewall(error));
         }
         self.kill_switch = tunnel;
@@ -236,7 +245,9 @@ impl<T: Transport, F: Firewall> ConnectionController<T, F> {
         self.kill_switch = blocking;
         self.transport
             .disconnect()
-            .map_err(ConnectionError::Transport)
+            .map_err(ConnectionError::Transport)?;
+        self.transport_active = false;
+        Ok(())
     }
 
     /// Disables filtering only when the connection is already torn down.
@@ -246,6 +257,11 @@ impl<T: Transport, F: Firewall> ConnectionController<T, F> {
     /// Returns a state-machine or firewall error without changing the effective
     /// policy.
     pub fn disable(&mut self) -> Result<(), ConnectionError> {
+        if self.transport_active {
+            return Err(ConnectionError::KillSwitch(
+                KillSwitchError::TransportActive,
+            ));
+        }
         if matches!(self.kill_switch.policy(), TrafficPolicy::TunnelOnly { .. }) {
             return Err(ConnectionError::KillSwitch(KillSwitchError::NotEnabled));
         }

@@ -137,6 +137,8 @@ fn controller_stays_blocking_after_connect_or_teardown_failure() {
     failed_disconnect.connect(&config(), &context()).unwrap();
     assert!(failed_disconnect.disconnect().is_err());
     assert_eq!(failed_disconnect.policy(), &TrafficPolicy::BlockNonTunnel);
+    assert!(failed_disconnect.disable().is_err());
+    assert!(failed_disconnect.transport().connected);
 }
 
 #[test]
