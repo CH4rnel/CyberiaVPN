@@ -45,6 +45,11 @@ firewall policy. It then reconnects, removes the tunnel underneath the client,
 verifies that ordinary underlay ICMP is blocked, and confirms that a failed
 teardown retains the default-deny nftables policy.
 
+The same scenario then kills a connected client with `SIGKILL` and verifies
+that the kernel retains the default-deny policy and blocks underlay traffic.
+Finally, it repeats the graceful shutdown in `always_on` mode and verifies
+that the tunnel is removed while filtering remains active.
+
 On failure, the scenarios preserve the nonzero exit status and print interface,
 address, WireGuard and owned nftables-table state for each namespace. They do
 not print generated private keys or client configuration content.
