@@ -180,6 +180,24 @@ if ip netns exec "$client_namespace" nft list table inet cyberia_vpn >/dev/null 
 fi
 ip netns exec "$client_namespace" ping -c 1 -W 2 192.0.2.1 >/dev/null
 
+failing_wg="$work_directory/wg-fail"
+printf '%s\n' '#!/usr/bin/env sh' \
+    'printf "%s\n" "injected WireGuard failure" >&2' 'exit 1' >"$failing_wg"
+chmod 700 "$failing_wg"
+wireguard_failure_config="$work_directory/client-wireguard-failure.json"
+sed "s#\"wg\": \"[^\"]*\"#\"wg\": \"$failing_wg\"#" \
+    "$client_config" >"$wireguard_failure_config"
+chmod 600 "$wireguard_failure_config"
+if ip netns exec "$client_namespace" "$client_binary" "$wireguard_failure_config" \
+    >"$work_directory/wireguard-failure.log" 2>&1; then
+    printf '%s\n' 'Client unexpectedly connected after WireGuard setup failed' >&2
+    exit 1
+fi
+grep -q 'injected WireGuard failure' "$work_directory/wireguard-failure.log"
+assert_command_fails ip -n "$client_namespace" link show dev "$client_tunnel"
+ip netns exec "$client_namespace" nft list table inet cyberia_vpn | grep -q 'policy drop'
+assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
+
 touch "$work_directory/fail-domain"
 if ip netns exec "$client_namespace" "$client_binary" "$client_config" \
     >"$work_directory/dns-failure.log" 2>&1; then
