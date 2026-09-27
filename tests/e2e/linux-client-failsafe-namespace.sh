@@ -160,6 +160,26 @@ if ip netns exec "$client_namespace" nft list table inet cyberia_vpn >/dev/null 
 fi
 ip netns exec "$client_namespace" ping -c 1 -W 2 192.0.2.1 >/dev/null
 
+failing_nft="$work_directory/nft-fail"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 1' >"$failing_nft"
+chmod 700 "$failing_nft"
+firewall_failure_config="$work_directory/client-firewall-failure.json"
+sed "s#\"nft\": \"[^\"]*\"#\"nft\": \"$failing_nft\"#" \
+    "$client_config" >"$firewall_failure_config"
+chmod 600 "$firewall_failure_config"
+if ip netns exec "$client_namespace" "$client_binary" "$firewall_failure_config" \
+    >"$work_directory/firewall-failure.log" 2>&1; then
+    printf '%s\n' 'Client unexpectedly connected without firewall protection' >&2
+    exit 1
+fi
+grep -q 'nftables command failed' "$work_directory/firewall-failure.log"
+assert_command_fails ip -n "$client_namespace" link show dev "$client_tunnel"
+if ip netns exec "$client_namespace" nft list table inet cyberia_vpn >/dev/null 2>&1; then
+    printf '%s\n' 'Client left a firewall table after initialization failed' >&2
+    exit 1
+fi
+ip netns exec "$client_namespace" ping -c 1 -W 2 192.0.2.1 >/dev/null
+
 touch "$work_directory/fail-domain"
 if ip netns exec "$client_namespace" "$client_binary" "$client_config" \
     >"$work_directory/dns-failure.log" 2>&1; then
