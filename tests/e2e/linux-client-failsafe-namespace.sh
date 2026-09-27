@@ -81,6 +81,9 @@ resolver="$work_directory/resolvectl"
 cat >"$resolver" <<EOF
 #!/usr/bin/env sh
 printf '%s\\n' "\$*" >>"$work_directory/resolver.log"
+if [ "\$1" = domain ] && [ -f "$work_directory/fail-domain" ]; then
+    exit 1
+fi
 EOF
 chmod 700 "$resolver"
 client_config="$work_directory/client.json"
@@ -150,6 +153,24 @@ grep -Fxq 'revert wg0' "$work_directory/resolver.log"
 assert_command_fails ip -n "$client_namespace" link show dev "$client_tunnel"
 if ip netns exec "$client_namespace" nft list table inet cyberia_vpn >/dev/null 2>&1; then
     printf '%s\n' 'Client retained filtering after graceful non-always-on teardown' >&2
+    exit 1
+fi
+ip netns exec "$client_namespace" ping -c 1 -W 2 192.0.2.1 >/dev/null
+
+touch "$work_directory/fail-domain"
+if ip netns exec "$client_namespace" "$client_binary" "$client_config" \
+    >"$work_directory/dns-failure.log" 2>&1; then
+    printf '%s\n' 'Client unexpectedly connected after DNS setup failed' >&2
+    exit 1
+fi
+rm "$work_directory/fail-domain"
+if [[ "$(tail -n 3 "$work_directory/resolver.log")" != $'dns wg0 192.0.2.53\ndomain wg0 ~.\nrevert wg0' ]]; then
+    printf '%s\n' 'Client did not revert DNS after setup failed' >&2
+    exit 1
+fi
+assert_command_fails ip -n "$client_namespace" link show dev "$client_tunnel"
+if ip netns exec "$client_namespace" nft list table inet cyberia_vpn >/dev/null 2>&1; then
+    printf '%s\n' 'Client retained filtering after a cleaned-up DNS setup failure' >&2
     exit 1
 fi
 ip netns exec "$client_namespace" ping -c 1 -W 2 192.0.2.1 >/dev/null
