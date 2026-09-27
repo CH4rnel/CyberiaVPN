@@ -84,6 +84,9 @@ printf '%s\\n' "\$*" >>"$work_directory/resolver.log"
 if [ "\$1" = domain ] && [ -f "$work_directory/fail-domain" ]; then
     exit 1
 fi
+if [ "\$1" = revert ] && [ -f "$work_directory/fail-revert" ]; then
+    exit 1
+fi
 EOF
 chmod 700 "$resolver"
 client_config="$work_directory/client.json"
@@ -174,6 +177,36 @@ if ip netns exec "$client_namespace" nft list table inet cyberia_vpn >/dev/null 
     exit 1
 fi
 ip netns exec "$client_namespace" ping -c 1 -W 2 192.0.2.1 >/dev/null
+
+ip netns exec "$client_namespace" "$client_binary" "$client_config" &
+client_pid="$!"
+wait_for_process_link "$client_namespace" "$client_tunnel" "$client_pid"
+ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null
+attempts=50
+while ! tail -n 1 "$work_directory/resolver.log" | grep -Fxq 'default-route wg0 yes'; do
+    kill -0 "$client_pid"
+    attempts=$((attempts - 1))
+    if (( attempts == 0 )); then
+        printf '%s\n' 'Timed out waiting for client DNS setup' >&2
+        exit 1
+    fi
+    sleep 0.1
+done
+touch "$work_directory/fail-revert"
+kill -TERM "$client_pid"
+if wait "$client_pid"; then
+    printf '%s\n' 'Client unexpectedly completed teardown after DNS revert failed' >&2
+    exit 1
+fi
+client_pid=""
+rm "$work_directory/fail-revert"
+[[ "$(tail -n 1 "$work_directory/resolver.log")" == 'revert wg0' ]]
+ip -n "$client_namespace" link show dev "$client_tunnel" >/dev/null
+ip netns exec "$client_namespace" nft list table inet cyberia_vpn | grep -q 'policy drop'
+ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null
+assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
+ip -n "$client_namespace" link delete dev "$client_tunnel"
+assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
 
 ip netns exec "$client_namespace" "$client_binary" "$client_config" &
 client_pid="$!"

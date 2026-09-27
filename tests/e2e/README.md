@@ -38,11 +38,14 @@ configures both ends of a WireGuard tunnel, proves encrypted ICMP traffic and
 then verifies that the client interface was removed.
 
 `linux-client-failsafe-namespace.sh` launches the compiled Linux client in the
-client namespace with a generated key and a no-op resolver stub. It proves
+client namespace with a generated key and a recording resolver stub. It proves
 tunnel traffic while nftables blocks ordinary underlay ICMP, rejects a competing
 process for the same managed interface,
 and verifies that graceful shutdown removes the interface and non-always-on
-firewall policy while restoring ordinary underlay ICMP. It then reconnects,
+firewall policy while restoring ordinary underlay ICMP. The resolver log checks
+DNS setup and revert. Injected DNS setup failure must revert the resolver,
+remove the tunnel and restore underlay traffic. Injected DNS revert failure
+must retain the tunnel and block ordinary underlay traffic. It then reconnects,
 removes the tunnel underneath the client,
 verifies that ordinary underlay ICMP is blocked, and confirms that a failed
 teardown retains the default-deny nftables policy.
