@@ -45,7 +45,10 @@ and verifies that graceful shutdown removes the interface and non-always-on
 firewall policy while restoring ordinary underlay ICMP. The resolver log checks
 DNS setup and revert. Injected DNS setup failure must revert the resolver,
 remove the tunnel and restore underlay traffic. Injected DNS revert failure
-must retain the tunnel and block ordinary underlay traffic. It then reconnects,
+must retain the tunnel and block ordinary underlay traffic. Repeated DNS cleanup
+failure after setup failure must do the same. The scenario also checks that a
+firewall startup failure creates no tunnel. A WireGuard setup failure removes
+its partial tunnel state while retaining firewall filtering. It then reconnects,
 removes the tunnel underneath the client,
 verifies that ordinary underlay ICMP is blocked, and confirms that a failed
 teardown retains the default-deny nftables policy.

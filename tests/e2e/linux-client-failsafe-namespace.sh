@@ -216,6 +216,25 @@ if ip netns exec "$client_namespace" nft list table inet cyberia_vpn >/dev/null 
 fi
 ip netns exec "$client_namespace" ping -c 1 -W 2 192.0.2.1 >/dev/null
 
+touch "$work_directory/fail-domain" "$work_directory/fail-revert"
+if ip netns exec "$client_namespace" "$client_binary" "$client_config" \
+    >"$work_directory/dns-cleanup-failure.log" 2>&1; then
+    printf '%s\n' 'Client unexpectedly recovered from repeated DNS cleanup failure' >&2
+    exit 1
+fi
+rm "$work_directory/fail-domain" "$work_directory/fail-revert"
+grep -q 'cleanup retry failed' "$work_directory/dns-cleanup-failure.log"
+if [[ "$(tail -n 4 "$work_directory/resolver.log")" != $'dns wg0 192.0.2.53\ndomain wg0 ~.\nrevert wg0\nrevert wg0' ]]; then
+    printf '%s\n' 'Client did not retry DNS cleanup after setup failed' >&2
+    exit 1
+fi
+ip -n "$client_namespace" link show dev "$client_tunnel" >/dev/null
+ip netns exec "$client_namespace" nft list table inet cyberia_vpn | grep -q 'policy drop'
+ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null
+assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
+ip -n "$client_namespace" link delete dev "$client_tunnel"
+assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
+
 ip netns exec "$client_namespace" "$client_binary" "$client_config" &
 client_pid="$!"
 wait_for_process_link "$client_namespace" "$client_tunnel" "$client_pid"
