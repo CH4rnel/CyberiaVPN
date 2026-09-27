@@ -78,7 +78,10 @@ ip netns exec "$node_namespace" wg set "$node_tunnel" \
 ip -n "$node_namespace" link set "$node_tunnel" up
 
 resolver="$work_directory/resolvectl"
-printf '%s\n' '#!/usr/bin/env sh' 'exit 0' >"$resolver"
+cat >"$resolver" <<EOF
+#!/usr/bin/env sh
+printf '%s\\n' "\$*" >>"$work_directory/resolver.log"
+EOF
 chmod 700 "$resolver"
 client_config="$work_directory/client.json"
 node_public_key_hex="$(base64 -d <"$work_directory/node.pub" | od -An -tx1 | tr -d ' \n')"
@@ -123,6 +126,9 @@ while ! ip netns exec "$client_namespace" ping -c 1 -W 1 10.20.0.1 >/dev/null; d
 done
 ip netns exec "$client_namespace" nft list table inet cyberia_vpn | grep -q 'policy drop'
 assert_command_fails ip netns exec "$client_namespace" ping -c 1 -W 1 192.0.2.1
+grep -Fxq 'dns wg0 192.0.2.53' "$work_directory/resolver.log"
+grep -Fxq 'domain wg0 ~.' "$work_directory/resolver.log"
+grep -Fxq 'default-route wg0 yes' "$work_directory/resolver.log"
 
 contender_log="$work_directory/contender.log"
 if ip netns exec "$client_namespace" "$client_binary" "$client_config" \
@@ -140,6 +146,7 @@ if ! wait "$client_pid"; then
     exit 1
 fi
 client_pid=""
+grep -Fxq 'revert wg0' "$work_directory/resolver.log"
 assert_command_fails ip -n "$client_namespace" link show dev "$client_tunnel"
 if ip netns exec "$client_namespace" nft list table inet cyberia_vpn >/dev/null 2>&1; then
     printf '%s\n' 'Client retained filtering after graceful non-always-on teardown' >&2
